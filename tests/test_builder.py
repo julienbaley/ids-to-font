@@ -22,6 +22,43 @@ def resolution(ids: str) -> SvgResolution:
     )
 
 
+def mixed_winding_resolution(ids: str) -> SvgResolution:
+    return SvgResolution(
+        requested_ids=ids,
+        resolved_ids=ids,
+        view_box="0 0 95 95",
+        paths=(
+            {
+                "d": "M 10,10 L 40,10 L 40,40 L 10,40 Z",
+                "transform": "scale(1,1)",
+            },
+            {
+                "d": "M 30,30 L 30,70 L 70,70 L 70,30 Z",
+                "transform": "scale(1,1)",
+            },
+        ),
+    )
+
+
+def contour_areas(font: TTFont, glyph_name: str) -> list[float]:
+    glyph = font["glyf"][glyph_name]
+    coordinates, end_points, _ = glyph.getCoordinates(font["glyf"])
+    areas = []
+    start = 0
+    for end in end_points:
+        points = coordinates[start : end + 1]
+        areas.append(
+            sum(
+                points[index][0] * points[(index + 1) % len(points)][1]
+                - points[(index + 1) % len(points)][0] * points[index][1]
+                for index in range(len(points))
+            )
+            / 2
+        )
+        start = end + 1
+    return areas
+
+
 def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
     result = build(
         ["⿱弔口", "⿰鳥叴"],
@@ -94,6 +131,23 @@ def test_generated_glyphs_mark_overlapping_contours(tmp_path: Path) -> None:
         glyph = font["glyf"][glyph_name]
         assert glyph.numberOfContours > 0
         assert glyph.flags[0] & flagOverlapSimple
+
+
+def test_separately_filled_paths_use_consistent_contour_winding(
+    tmp_path: Path,
+) -> None:
+    result = build(
+        ["⿰鳥叴"],
+        tmp_path,
+        output_format="ttf",
+        delay=0,
+        resolver=mixed_winding_resolution,
+    )
+    with TTFont(result.font_path) as font:
+        glyph_name = font.getBestCmap()[0xE000]
+        areas = contour_areas(font, glyph_name)
+        assert len(areas) == 2
+        assert all(area < 0 for area in areas)
 
 
 def test_rejects_unknown_output_format(tmp_path: Path) -> None:

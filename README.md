@@ -8,7 +8,10 @@ outline to a font glyph, and assigns a code point in the Unicode BMP Private
 Use Area.
 
 Generated TrueType outlines are marked as containing overlapping contours so
-stroke intersections retain the source SVG's filled appearance.
+stroke intersections retain the source SVG's filled appearance. Each
+separately filled SVG stroke is also normalized to the same contour direction
+before the paths are combined into one font glyph; this prevents
+opposite-winding strokes from becoming holes.
 
 ## Input
 

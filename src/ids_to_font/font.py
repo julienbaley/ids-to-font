@@ -6,6 +6,8 @@ import re
 from datetime import UTC, datetime
 
 from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.areaPen import AreaPen
+from fontTools.pens.reverseContourPen import ReverseContourPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.svgLib.path import parse_path
@@ -38,22 +40,28 @@ def resolution_to_glyph(resolution: SvgResolution):
             if match
             else (1.0, 1.0)
         )
-        transformed = TransformPen(
-            pen,
-            (
-                source_x * scale_to_em,
-                0,
-                0,
-                -source_y * scale_to_em,
-                left,
-                top,
-            ),
+        transform = (
+            source_x * scale_to_em,
+            0,
+            0,
+            -source_y * scale_to_em,
+            left,
+            top,
         )
         data = path["d"]
+        data = data if data.rstrip().upper().endswith("Z") else data + " Z"
+        area_pen = AreaPen()
         parse_path(
-            data if data.rstrip().upper().endswith("Z") else data + " Z",
-            transformed,
+            data,
+            TransformPen(area_pen, transform),
         )
+        transformed = TransformPen(pen, transform)
+        target = (
+            ReverseContourPen(transformed)
+            if area_pen.value > 0
+            else transformed
+        )
+        parse_path(data, target)
     glyph = pen.glyph()
     if glyph.numberOfContours > 0:
         glyph.flags[0] |= flagOverlapSimple
