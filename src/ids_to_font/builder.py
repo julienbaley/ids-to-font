@@ -56,6 +56,7 @@ def build(
     output_format: str = "woff2",
     font_date: str = "1970-01-01",
     copyright_notice: str = "KAGE-generated outlines preserved from Zi.tools.",
+    match_font: Path | None = None,
     delay: float = 10,
     resolver: Callable[[str], SvgResolution] = fetch_resolution,
     sleeper: Callable[[float], None] = time.sleep,
@@ -70,13 +71,14 @@ def build(
     previous = load_previous_assignments(previous_mapping)
     assignments = assign_pua(active_ids, previous)
     resolutions = resolve_all(active_ids, resolver, delay, sleeper)
-    font = build_font(
+    font, calibration = build_font(
         resolutions,
         assignments,
         family_name,
         font_date,
         copyright_notice,
         output_format,
+        match_font,
     )
 
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -99,6 +101,20 @@ def build(
             "font_format": output_format,
             "provider": PROVIDER,
             "glyph_license": "GPL-3.0-only",
+            **(
+                {
+                    "calibration": {
+                        "reference_font": match_font.name,
+                        "reference_sample_size": calibration["sample_size"],
+                        "scale": round(calibration["scale"], 8),
+                        "vertical_shift": round(
+                            calibration["vertical_shift"], 8
+                        ),
+                    }
+                }
+                if calibration is not None and match_font is not None
+                else {}
+            ),
             "glyphs": {
                 ids: {
                     "character": chr(assignments[ids]),

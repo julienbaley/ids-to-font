@@ -58,6 +58,26 @@ ids-to-font ids.txt \
 The default format is `woff2`. Run the command once per desired format; both
 formats use the same PUA assignments when given the same previous mapping.
 
+## Matching a companion Han font
+
+To make IDS glyphs share the optical size, baseline, and line spacing of a
+font used for ordinary Han characters:
+
+```bash
+ids-to-font ids.txt \
+  --match-font /path/to/BabelStoneHan.ttf \
+  --output-directory build
+```
+
+The tool measures full-width CJK glyphs in the reference font and the active
+IDS glyph set. It then applies one uniform scale and vertical shift to every
+IDS outline and adopts the reference font's normalized vertical metrics. The
+derived scale, shift, and reference sample size are recorded under
+`calibration` in the output mapping.
+
+Matching is optical rather than stylistic: outlines from different type
+designs will retain their individual stroke shapes.
+
 Reuse permanent PUA assignments from an earlier output mapping:
 
 ```bash

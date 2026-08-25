@@ -48,6 +48,14 @@ def parser() -> argparse.ArgumentParser:
         help="Copyright text embedded in the font",
     )
     result.add_argument(
+        "--match-font",
+        type=Path,
+        help=(
+            "Reference TTF/OTF whose full-width Han glyph size, baseline, "
+            "and line metrics should be matched"
+        ),
+    )
+    result.add_argument(
         "--delay",
         type=float,
         default=10,
@@ -68,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
             output_format=args.output_format,
             font_date=args.font_date,
             copyright_notice=args.copyright,
+            match_font=args.match_font,
             delay=args.delay,
         )
     except (OSError, ValueError) as error:

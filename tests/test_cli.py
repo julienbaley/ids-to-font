@@ -13,6 +13,20 @@ def test_output_format_accepts_ttf() -> None:
         ["ids.txt", "--output-directory", "build", "--output-format", "ttf"]
     )
     assert args.output_format == "ttf"
+    assert args.match_font is None
+
+
+def test_accepts_reference_font() -> None:
+    args = parser().parse_args(
+        [
+            "ids.txt",
+            "--output-directory",
+            "build",
+            "--match-font",
+            "reference.ttf",
+        ]
+    )
+    assert str(args.match_font) == "reference.ttf"
 
 
 def test_output_format_rejects_unknown_value() -> None:

@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
 
@@ -57,6 +59,39 @@ def contour_areas(font: TTFont, glyph_name: str) -> list[float]:
         )
         start = end + 1
     return areas
+
+
+def write_reference_font(path: Path) -> None:
+    pen = TTGlyphPen(None)
+    pen.moveTo((50, -100))
+    pen.lineTo((950, -100))
+    pen.lineTo((950, 900))
+    pen.lineTo((50, 900))
+    pen.closePath()
+    builder = FontBuilder(1024, isTTF=True)
+    builder.setupGlyphOrder([".notdef", "uni4E00"])
+    builder.setupCharacterMap({0x4E00: "uni4E00"})
+    builder.setupGlyf({".notdef": TTGlyphPen(None).glyph(), "uni4E00": pen.glyph()})
+    builder.setupHorizontalMetrics({".notdef": (1024, 0), "uni4E00": (1024, 50)})
+    builder.setupHorizontalHeader(ascent=900, descent=-100, lineGap=20)
+    builder.setupOS2(
+        sTypoAscender=900,
+        sTypoDescender=-100,
+        sTypoLineGap=20,
+        usWinAscent=900,
+        usWinDescent=100,
+    )
+    builder.setupNameTable(
+        {
+            "familyName": "Reference Han",
+            "styleName": "Regular",
+            "fullName": "Reference Han",
+            "psName": "ReferenceHan",
+        }
+    )
+    builder.setupPost()
+    builder.setupMaxp()
+    builder.font.save(path)
 
 
 def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
@@ -148,6 +183,30 @@ def test_separately_filled_paths_use_consistent_contour_winding(
         areas = contour_areas(font, glyph_name)
         assert len(areas) == 2
         assert all(area < 0 for area in areas)
+
+
+def test_matches_reference_han_size_baseline_and_metrics(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+    result = build(
+        ["⿰鳥叴"],
+        tmp_path / "output",
+        output_format="ttf",
+        match_font=reference,
+        delay=0,
+        resolver=resolution,
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+    assert mapping["calibration"]["reference_font"] == "reference.ttf"
+    assert mapping["calibration"]["reference_sample_size"] == 1
+    with TTFont(result.font_path) as font:
+        glyph = font["glyf"][font.getBestCmap()[0xE000]]
+        glyph.recalcBounds(font["glyf"])
+        assert 999 <= glyph.yMax - glyph.yMin <= 1001
+        assert 399 <= (glyph.yMax + glyph.yMin) / 2 <= 401
+        assert font["hhea"].ascent == 900
+        assert font["hhea"].descent == -100
+        assert font["hhea"].lineGap == 20
 
 
 def test_rejects_unknown_output_format(tmp_path: Path) -> None:
