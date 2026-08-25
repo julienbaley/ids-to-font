@@ -1,4 +1,4 @@
-"""Convert Zi.tools SVG path data into a WOFF2 font."""
+"""Convert Zi.tools SVG path data into a TrueType or WOFF2 font."""
 
 from __future__ import annotations
 
@@ -62,6 +62,7 @@ def build_font(
     family_name: str,
     font_date: str,
     copyright_notice: str,
+    output_format: str,
 ):
     try:
         metadata_date = datetime.fromisoformat(f"{font_date}T00:00:00+00:00")
@@ -116,5 +117,5 @@ def build_font(
     builder.font["head"].created = epoch
     builder.font["head"].modified = epoch
     builder.font.recalcTimestamp = False
-    builder.font.flavor = "woff2"
+    builder.font.flavor = "woff2" if output_format == "woff2" else None
     return builder.font

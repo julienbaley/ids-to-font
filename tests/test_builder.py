@@ -30,6 +30,7 @@ def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
     )
     mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
     assert mapping["font"] == result.font_path.name
+    assert mapping["font_format"] == "woff2"
     assert set(mapping["glyphs"]) == {"⿰鳥叴", "⿱弔口"}
     assert mapping["assignments"] == {
         "⿰鳥叴": "U+E000",
@@ -39,21 +40,59 @@ def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
     assert mapping["glyph_license"] == "GPL-3.0-only"
 
 
-def test_build_is_deterministic(tmp_path: Path) -> None:
+def test_build_is_deterministic_for_each_format(tmp_path: Path) -> None:
+    for output_format in ("woff2", "ttf"):
+        first = build(
+            ["⿰鳥叴"],
+            tmp_path / output_format / "first",
+            output_format=output_format,
+            delay=0,
+            resolver=resolution,
+        )
+        second = build(
+            ["⿰鳥叴"],
+            tmp_path / output_format / "second",
+            output_format=output_format,
+            delay=0,
+            resolver=resolution,
+        )
+        assert first.font_path.suffix == f".{output_format}"
+        assert first.font_path.name == second.font_path.name
+        assert first.font_path.read_bytes() == second.font_path.read_bytes()
+
+
+def test_builds_ttf_with_the_same_cmap(tmp_path: Path) -> None:
     first = build(
-        ["⿰鳥叴"],
-        tmp_path / "first",
+        ["⿰鳥叴", "⿱弔口"],
+        tmp_path / "woff2",
         delay=0,
         resolver=resolution,
     )
     second = build(
-        ["⿰鳥叴"],
-        tmp_path / "second",
+        ["⿰鳥叴", "⿱弔口"],
+        tmp_path / "ttf",
+        output_format="ttf",
         delay=0,
         resolver=resolution,
     )
-    assert first.font_path.name == second.font_path.name
-    assert first.font_path.read_bytes() == second.font_path.read_bytes()
+    with TTFont(first.font_path) as woff2, TTFont(second.font_path) as ttf:
+        assert woff2.getBestCmap() == ttf.getBestCmap()
+        assert woff2.getGlyphOrder() == ttf.getGlyphOrder()
+
+
+def test_rejects_unknown_output_format(tmp_path: Path) -> None:
+    try:
+        build(
+            ["⿰鳥叴"],
+            tmp_path,
+            output_format="otf",
+            delay=0,
+            resolver=resolution,
+        )
+    except ValueError as error:
+        assert "woff2" in str(error)
+    else:
+        raise AssertionError("Unknown output format was accepted.")
 
 
 def test_font_date_changes_only_requested_metadata(tmp_path: Path) -> None:

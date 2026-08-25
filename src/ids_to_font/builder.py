@@ -53,6 +53,7 @@ def build(
     previous_mapping: Path | None = None,
     family_name: str = "IDS Glyphs",
     basename: str = "ids-glyphs",
+    output_format: str = "woff2",
     font_date: str = "1970-01-01",
     copyright_notice: str = "KAGE-generated outlines preserved from Zi.tools.",
     delay: float = 10,
@@ -61,6 +62,8 @@ def build(
 ) -> BuildResult:
     if delay < 0:
         raise ValueError("Request delay must not be negative.")
+    if output_format not in {"woff2", "ttf"}:
+        raise ValueError("Output format must be 'woff2' or 'ttf'.")
     active_ids = sorted(set(expressions))
     if not active_ids:
         raise ValueError("At least one IDS expression is required.")
@@ -73,15 +76,16 @@ def build(
         family_name,
         font_date,
         copyright_notice,
+        output_format,
     )
 
     output_directory.mkdir(parents=True, exist_ok=True)
-    temporary_font = output_directory / f"{basename}.woff2"
+    temporary_font = output_directory / f"{basename}.{output_format}"
     font.save(temporary_font)
     digest = hashlib.sha256(temporary_font.read_bytes()).hexdigest()
-    font_path = output_directory / f"{basename}-{digest[:12]}.woff2"
+    font_path = output_directory / f"{basename}-{digest[:12]}.{output_format}"
     temporary_font.replace(font_path)
-    for previous_font in output_directory.glob(f"{basename}-*.woff2"):
+    for previous_font in output_directory.glob(f"{basename}-*.{output_format}"):
         if previous_font != font_path:
             previous_font.unlink()
 
@@ -92,6 +96,7 @@ def build(
             "schema_version": "1.0",
             "font_family": family_name,
             "font": font_path.name,
+            "font_format": output_format,
             "provider": PROVIDER,
             "glyph_license": "GPL-3.0-only",
             "glyphs": {

@@ -13,7 +13,7 @@ from .input import read_ids
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description=(
-            "Build a WOFF2 font and IDS-to-PUA JSON mapping from "
+            "Build a font and IDS-to-PUA JSON mapping from "
             "newline-delimited IDS expressions."
         )
     )
@@ -31,6 +31,12 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--family-name", default="IDS Glyphs")
     result.add_argument("--basename", default="ids-glyphs")
+    result.add_argument(
+        "--output-format",
+        choices=("woff2", "ttf"),
+        default="woff2",
+        help="Generated font format (default: woff2)",
+    )
     result.add_argument(
         "--font-date",
         default="1970-01-01",
@@ -59,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             previous_mapping=args.previous_mapping,
             family_name=args.family_name,
             basename=args.basename,
+            output_format=args.output_format,
             font_date=args.font_date,
             copyright_notice=args.copyright,
             delay=args.delay,

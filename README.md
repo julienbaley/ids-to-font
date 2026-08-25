@@ -1,6 +1,6 @@
 # ids-to-font
 
-Build a presentation-only WOFF2 font and a matching IDS-to-PUA JSON mapping
+Build a presentation-only WOFF2 or TTF font and a matching IDS-to-PUA JSON mapping
 from a newline-delimited list of Ideographic Description Sequences (IDS).
 
 The tool resolves each IDS through the Zi.tools API, converts the returned KAGE
@@ -41,6 +41,17 @@ build/ids-glyphs-<sha256-prefix>.woff2
 build/ids-glyphs.json
 ```
 
+Generate a TTF for desktop or LaTeX use instead:
+
+```bash
+ids-to-font ids.txt \
+  --output-format ttf \
+  --output-directory build
+```
+
+The default format is `woff2`. Run the command once per desired format; both
+formats use the same PUA assignments when given the same previous mapping.
+
 Reuse permanent PUA assignments from an earlier output mapping:
 
 ```bash
@@ -68,13 +79,14 @@ ids-to-font ids.txt \
 ```
 
 The pinned FontTools and Brotli versions, identical inputs, the same previous
-mapping, and the same metadata produce the same WOFF2 bytes.
+mapping, format, and metadata produce the same font bytes.
 
 ## Output mapping
 
 The JSON contains:
 
-- `font`, the generated WOFF2 filename;
+- `font`, the generated font filename;
+- `font_format`, either `woff2` or `ttf`;
 - `glyphs`, the active IDS-to-character mappings represented by the font;
 - `assignments`, the permanent assignment history used by later builds;
 - `provider`, the outline provider used for this build.
