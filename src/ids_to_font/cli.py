@@ -83,7 +83,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ids-to-font: {error}", file=sys.stderr)
         return 1
     print(
-        f"Built {result.font_path} and {result.mapping_path} "
+        "Built "
+        + ", ".join(
+            str(path)
+            for path in (
+                result.font_path,
+                result.mapping_path,
+                result.style_path,
+            )
+            if path is not None
+        )
+        + " "
         f"({result.glyph_count} active glyphs; "
         f"{result.reserved_assignment_count} reserved assignments)."
     )

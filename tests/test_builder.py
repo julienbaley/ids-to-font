@@ -149,6 +149,7 @@ def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
     mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
     assert mapping["font"] == result.font_path.name
     assert mapping["font_format"] == "woff2"
+    assert result.style_path is None
     assert set(mapping["glyphs"]) == {"⿰鳥叴", "⿱弔口"}
     assert mapping["assignments"] == {
         "⿰鳥叴": "U+E000",
@@ -196,6 +197,27 @@ def test_builds_ttf_with_the_same_cmap(tmp_path: Path) -> None:
     with TTFont(first.font_path) as woff2, TTFont(second.font_path) as ttf:
         assert woff2.getBestCmap() == ttf.getBestCmap()
         assert woff2.getGlyphOrder() == ttf.getGlyphOrder()
+    mapping = json.loads(second.mapping_path.read_text(encoding="utf-8"))
+    assert second.style_path == tmp_path / "ttf" / "ids-glyphs.sty"
+    assert mapping["latex_package"] == "ids-glyphs.sty"
+
+
+def test_ttf_package_maps_ids_expressions_to_pua_characters(
+    tmp_path: Path,
+) -> None:
+    result = build(
+        ["⿰鳥叴", "⿱弔口"],
+        tmp_path,
+        output_format="ttf",
+        delay=0,
+        resolver=resolution,
+    )
+    style = result.style_path.read_text(encoding="utf-8")
+    assert f"{{{result.font_path.name}}}" in style
+    assert "{ ⿰鳥叴 } { \\char_generate:nn { \"E000 } { 12 } }" in style
+    assert "{ ⿱弔口 } { \\char_generate:nn { \"E001 } { 12 } }" in style
+    assert r"\NewDocumentCommand \ids { m }" in style
+    assert r"\NewDocumentCommand \idschar { m }" in style
 
 
 def test_generated_glyphs_mark_overlapping_contours(tmp_path: Path) -> None:

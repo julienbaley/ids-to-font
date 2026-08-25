@@ -22,6 +22,7 @@ from .zi_tools import PROVIDER, SvgResolution, fetch_resolution
 class BuildResult:
     font_path: Path
     mapping_path: Path
+    style_path: Path | None
     glyph_count: int
     reserved_assignment_count: int
 
@@ -29,6 +30,51 @@ class BuildResult:
 def write_json(path: Path, value: dict) -> None:
     path.write_text(
         json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_latex_package(
+    path: Path,
+    package_name: str,
+    font_path: Path,
+    font_date: str,
+    active_ids: list[str],
+    assignments: dict[str, int],
+) -> None:
+    mappings = "\n".join(
+        (
+            r"\prop_gput:Nnn \g__ids_to_font_mapping_prop"
+            f" {{ {ids} }} {{ \\char_generate:nn {{ \"{assignments[ids]:X} }} {{ 12 }} }}"
+        )
+        for ids in active_ids
+    )
+    path.write_text(
+        rf"""\NeedsTeXFormat{{LaTeX2e}}
+\ProvidesPackage{{{package_name}}}[{font_date.replace("-", "/")} Generated IDS font lookup]
+\RequirePackage{{fontspec}}
+
+\ExplSyntaxOn
+\newfontfamily\idsfont[Path=./]{{{font_path.name}}}
+\prop_new:N \g__ids_to_font_mapping_prop
+{mappings}
+
+\msg_new:nnn {{ ids-to-font }} {{ unknown-expression }}
+  {{ Unknown~IDS~expression~'#1'. }}
+
+\cs_new_protected:Npn \__ids_to_font_lookup:n #1
+  {{
+    \prop_get:NnNTF \g__ids_to_font_mapping_prop {{ #1 }} \l_tmpa_tl
+      {{ \tl_use:N \l_tmpa_tl }}
+      {{ \msg_error:nnn {{ ids-to-font }} {{ unknown-expression }} {{ #1 }} }}
+  }}
+
+\NewDocumentCommand \idschar {{ m }}
+  {{ \__ids_to_font_lookup:n {{ #1 }} }}
+\NewDocumentCommand \ids {{ m }}
+  {{ {{\idsfont\__ids_to_font_lookup:n {{ #1 }}}} }}
+\ExplSyntaxOff
+""",
         encoding="utf-8",
     )
 
@@ -91,6 +137,18 @@ def build(
         if previous_font != font_path:
             previous_font.unlink()
 
+    style_path = None
+    if output_format == "ttf":
+        style_path = output_directory / f"{basename}.sty"
+        write_latex_package(
+            style_path,
+            basename,
+            font_path,
+            font_date,
+            active_ids,
+            assignments,
+        )
+
     mapping_path = output_directory / f"{basename}.json"
     write_json(
         mapping_path,
@@ -99,6 +157,11 @@ def build(
             "font_family": family_name,
             "font": font_path.name,
             "font_format": output_format,
+            **(
+                {"latex_package": style_path.name}
+                if style_path is not None
+                else {}
+            ),
             "provider": PROVIDER,
             "glyph_license": "GPL-3.0-only",
             **(
@@ -143,6 +206,7 @@ def build(
     return BuildResult(
         font_path=font_path,
         mapping_path=mapping_path,
+        style_path=style_path,
         glyph_count=len(active_ids),
         reserved_assignment_count=len(assignments),
     )

@@ -55,8 +55,33 @@ ids-to-font ids.txt \
   --output-directory build
 ```
 
-The default format is `woff2`. Run the command once per desired format; both
-formats use the same PUA assignments when given the same previous mapping.
+This also writes `ids-glyphs.sty`, a generated LaTeX package paired with the
+content-addressed TTF:
+
+```text
+build/ids-glyphs-<sha256-prefix>.ttf
+build/ids-glyphs.json
+build/ids-glyphs.sty
+```
+
+Place the `.sty` and TTF beside the document, then compile with XeLaTeX or
+LuaLaTeX:
+
+```tex
+\usepackage{ids-glyphs}
+
+Received text \ids{⿰鳥叴} continues here.
+```
+
+`\ids{...}` selects the generated font and resolves the IDS expression to its
+assigned PUA character. For advanced formatting, `\idsfont` is the generated
+font switch and `\idschar{...}` performs only the lookup. An unknown IDS
+expression produces a LaTeX error rather than silently displaying the wrong
+glyph.
+
+The default format is `woff2`; the `.sty` package is generated only for TTF
+output. Run the command once per desired format; both formats use the same PUA
+assignments when given the same previous mapping.
 
 ## Matching a companion Han font
 
@@ -115,6 +140,7 @@ The JSON contains:
 
 - `font`, the generated font filename;
 - `font_format`, either `woff2` or `ttf`;
+- `latex_package`, the generated `.sty` filename for TTF output;
 - `glyphs`, the active IDS-to-character mappings represented by the font;
 - `assignments`, the permanent assignment history used by later builds;
 - `provider`, the outline provider used for this build.
