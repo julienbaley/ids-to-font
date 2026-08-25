@@ -305,7 +305,12 @@ def build_font(
         raise ValueError("Font date must use YYYY-MM-DD format.") from error
     active = {ids: assignments[ids] for ids in resolutions}
     glyph_names = {
-        ids: f"uni{codepoint:04X}" for ids, codepoint in active.items()
+        ids: (
+            f"uni{codepoint:04X}"
+            if codepoint <= 0xFFFF
+            else f"u{codepoint:X}"
+        )
+        for ids, codepoint in active.items()
     }
     ordered_ids = sorted(active, key=lambda ids: active[ids])
     glyph_order = [".notdef"] + [glyph_names[ids] for ids in ordered_ids]

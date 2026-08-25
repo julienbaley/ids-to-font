@@ -1,13 +1,14 @@
 import json
 from pathlib import Path
 
+import pytest
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
 
-from ids_to_font.builder import build
-from ids_to_font.zi_tools import SvgResolution
+from ids_to_font.builder import build, build_encoded
+from ids_to_font.zi_tools import EncodedResolution, SvgResolution
 
 
 def resolution(ids: str) -> SvgResolution:
@@ -50,6 +51,20 @@ def separated_strokes_resolution(ids: str) -> SvgResolution:
         paths=(
             {"d": "M 10,10 L 20,10 L 20,85 L 10,85 Z"},
             {"d": "M 75,10 L 85,10 L 85,85 L 75,85 Z"},
+        ),
+    )
+
+
+def encoded_resolution(character: str) -> EncodedResolution:
+    return EncodedResolution(
+        character=character,
+        decompositions=("⿲糹叀糹", "⿰𦁆糸"),
+        view_box="0 0 95 95",
+        paths=(
+            {
+                "d": "M 10,10 L 85,10 L 85,85 L 10,85 Z",
+                "transform": "scale(1,1)",
+            },
         ),
     )
 
@@ -218,6 +233,57 @@ def test_ttf_package_maps_ids_expressions_to_pua_characters(
     assert "{ ⿱弔口 } { \\char_generate:nn { \"E001 } { 12 } }" in style
     assert r"\NewDocumentCommand \ids { m }" in style
     assert r"\NewDocumentCommand \idschar { m }" in style
+
+
+def test_builds_encoded_unicode_supplement_and_alias_package(
+    tmp_path: Path,
+) -> None:
+    primary = tmp_path / "primary.ttf"
+    write_reference_font(primary)
+    result = build_encoded(
+        ["𬘄"],
+        tmp_path / "output",
+        output_format="ttf",
+        latex_primary_font=primary,
+        delay=0,
+        resolver=encoded_resolution,
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+    assert mapping["mode"] == "unicode"
+    assert mapping["glyphs"]["𬘄"] == {
+        "character": "𬘄",
+        "codepoint": "U+2C604",
+        "decompositions": ["⿲糹叀糹", "⿰𦁆糸"],
+        "preferred_decomposition": "⿲糹叀糹",
+    }
+    assert mapping["latex_primary_font"] == "primary.ttf"
+    with TTFont(result.font_path) as font:
+        assert set(font.getBestCmap()) == {0x2C604}
+        assert font.getBestCmap()[0x2C604] == "u2C604"
+    style = result.style_path.read_text(encoding="utf-8")
+    assert "{ ⿲糹叀糹 } { \\char_generate:nn { \"2C604 } { 12 } }" in style
+    assert r"\setCJKfallbackfamilyfont" in style
+    assert "luaotfload.add_fallback" in style
+    assert r"\idshanfamily" in style
+
+
+def test_rejects_ambiguous_encoded_decomposition(tmp_path: Path) -> None:
+    def ambiguous(character: str) -> EncodedResolution:
+        return EncodedResolution(
+            character=character,
+            decompositions=("⿰甲乙",),
+            view_box="0 0 95 95",
+            paths=resolution("⿰甲乙").paths,
+        )
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        build_encoded(
+            ["𬘄", "𦸗"],
+            tmp_path,
+            output_format="ttf",
+            delay=0,
+            resolver=ambiguous,
+        )
 
 
 def test_generated_glyphs_mark_overlapping_contours(tmp_path: Path) -> None:

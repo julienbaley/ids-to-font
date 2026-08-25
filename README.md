@@ -1,11 +1,12 @@
 # ids-to-font
 
-Build a presentation-only WOFF2 or TTF font and a matching IDS-to-PUA JSON mapping
-from a newline-delimited list of Ideographic Description Sequences (IDS).
+Build presentation-only WOFF2 or TTF fonts from Ideographic Description
+Sequences (IDS) or encoded Unicode characters.
 
-The tool resolves each IDS through the Zi.tools API, converts the returned KAGE
-outline to a font glyph, and assigns a code point in the Unicode BMP Private
-Use Area.
+PUA mode resolves each IDS through the Zi.tools API and assigns a permanent
+code point in the Unicode BMP Private Use Area. Unicode mode accepts existing
+characters, retrieves their outlines and decompositions from Zi.tools, and
+maps each glyph to its real Unicode code point.
 
 Generated TrueType outlines are marked as containing overlapping contours so
 stroke intersections retain the source SVG's filled appearance. Each
@@ -13,7 +14,7 @@ separately filled SVG stroke is also normalized to the same contour direction
 before the paths are combined into one font glyph; this prevents
 opposite-winding strokes from becoming holes.
 
-## Input
+## PUA input
 
 The input is UTF-8 text containing one IDS expression per non-empty
 line:
@@ -26,6 +27,19 @@ line:
 
 Whitespace inside an expression, braces, comments, and non-IDS lines are
 rejected. Duplicate lines are harmless.
+
+## Encoded Unicode input
+
+Unicode mode accepts one Unicode scalar or `U+` value per non-empty line:
+
+```text
+𬘄
+U+26B82
+```
+
+The character itself is the font's cmap value. Zi.tools supplies its outline
+and may supply one or more level-1 IDS decompositions. These decompositions
+are recorded as input aliases; they do not replace the encoded character.
 
 ## Installation
 
@@ -83,6 +97,62 @@ The default format is `woff2`; the `.sty` package is generated only for TTF
 output. Run the command once per desired format; both formats use the same PUA
 assignments when given the same previous mapping.
 
+## Unicode supplements
+
+Generate a font containing encoded characters that are missing from a
+companion Han font:
+
+```bash
+ids-to-font missing-characters.txt \
+  --mode unicode \
+  --family-name "Odes Unicode Supplement" \
+  --basename odes-unicode-supplement \
+  --match-font /path/to/BabelStoneHan.ttf \
+  --output-directory build
+```
+
+The supplement's cmap contains the original code points, so ordinary Unicode
+input remains ordinary Unicode:
+
+```tex
+𬘄
+```
+
+The output JSON records every Zi.tools level-1 decomposition and identifies
+the first returned decomposition as `preferred_decomposition`.
+
+For LaTeX, generate TTF output and identify the primary font that should fall
+back to the supplement:
+
+```bash
+ids-to-font missing-characters.txt \
+  --mode unicode \
+  --output-format ttf \
+  --match-font build/primary-han.ttf \
+  --latex-primary-font build/primary-han.ttf \
+  --output-directory build
+```
+
+Place the primary TTF, supplement TTF, and generated `.sty` together. The
+package provides `\idshanfamily`, which configures xeCJK fallback under
+XeLaTeX and luaotfload fallback under LuaLaTeX:
+
+```tex
+\usepackage{unicode-supplement}
+
+{\idshanfamily 一𬘄一}
+```
+
+The decomposition aliases remain available as a convenient alternative:
+
+```tex
+\ids{⿰𦁆糸}
+```
+
+This emits the real character `𬘄` from the supplement font. Generated PUA and
+Unicode packages are composable: both add entries to the same `\ids{...}`
+lookup command, while each entry selects its own generated font.
+
 ## Matching a companion Han font
 
 To make IDS glyphs share the optical size, baseline, and line spacing of a
@@ -105,7 +175,7 @@ output mapping.
 Matching is optical rather than stylistic: outlines from different type
 designs will retain their individual stroke shapes.
 
-Reuse permanent PUA assignments from an earlier output mapping:
+In PUA mode, reuse permanent assignments from an earlier output mapping:
 
 ```bash
 ids-to-font ids.txt \
@@ -138,11 +208,13 @@ mapping, format, and metadata produce the same font bytes.
 
 The JSON contains:
 
+- `mode`, either `pua` or `unicode`;
 - `font`, the generated font filename;
 - `font_format`, either `woff2` or `ttf`;
 - `latex_package`, the generated `.sty` filename for TTF output;
-- `glyphs`, the active IDS-to-character mappings represented by the font;
-- `assignments`, the permanent assignment history used by later builds;
+- `glyphs`, the active glyphs and their code points;
+- `assignments`, the permanent assignment history in PUA mode;
+- `decompositions` and `preferred_decomposition` for encoded glyphs;
 - `provider`, the outline provider used for this build.
 
 PUA values are presentation identifiers, not textual data. Consumers must
