@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
 
 from ids_to_font.builder import build
 from ids_to_font.zi_tools import SvgResolution
@@ -78,6 +79,21 @@ def test_builds_ttf_with_the_same_cmap(tmp_path: Path) -> None:
     with TTFont(first.font_path) as woff2, TTFont(second.font_path) as ttf:
         assert woff2.getBestCmap() == ttf.getBestCmap()
         assert woff2.getGlyphOrder() == ttf.getGlyphOrder()
+
+
+def test_generated_glyphs_mark_overlapping_contours(tmp_path: Path) -> None:
+    result = build(
+        ["⿰鳥叴"],
+        tmp_path,
+        output_format="ttf",
+        delay=0,
+        resolver=resolution,
+    )
+    with TTFont(result.font_path) as font:
+        glyph_name = font.getBestCmap()[0xE000]
+        glyph = font["glyf"][glyph_name]
+        assert glyph.numberOfContours > 0
+        assert glyph.flags[0] & flagOverlapSimple
 
 
 def test_rejects_unknown_output_format(tmp_path: Path) -> None:

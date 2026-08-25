@@ -9,6 +9,7 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.svgLib.path import parse_path
+from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
 
 from .zi_tools import SvgResolution
 
@@ -53,7 +54,10 @@ def resolution_to_glyph(resolution: SvgResolution):
             data if data.rstrip().upper().endswith("Z") else data + " Z",
             transformed,
         )
-    return pen.glyph()
+    glyph = pen.glyph()
+    if glyph.numberOfContours > 0:
+        glyph.flags[0] |= flagOverlapSimple
+    return glyph
 
 
 def build_font(

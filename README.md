@@ -7,6 +7,9 @@ The tool resolves each IDS through the Zi.tools API, converts the returned KAGE
 outline to a font glyph, and assigns a code point in the Unicode BMP Private
 Use Area.
 
+Generated TrueType outlines are marked as containing overlapping contours so
+stroke intersections retain the source SVG's filled appearance.
+
 ## Input
 
 The input is UTF-8 text containing one IDS expression per non-empty
