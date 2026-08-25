@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import statistics
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,7 +16,11 @@ from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.svgLib.path import parse_path
 from fontTools.ttLib import TTFont
-from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
+from fontTools.ttLib.tables._g_l_y_f import flagOnCurve, flagOverlapSimple
+from shapely import make_valid
+from shapely.geometry import MultiPolygon, Polygon
+from shapely.geometry.polygon import orient
+from shapely.ops import unary_union
 
 from .zi_tools import SvgResolution
 
@@ -88,12 +93,9 @@ def reference_han_metrics(path: Path) -> dict:
         upm = font["head"].unitsPerEm
         cmap = font.getBestCmap()
         glyph_set = font.getGlyphSet()
-        boxes = []
+        records = []
         for codepoint, glyph_name in cmap.items():
-            if not (
-                0x3400 <= codepoint <= 0x9FFF
-                or 0x20000 <= codepoint <= 0x323AF
-            ):
+            if not 0x4E00 <= codepoint <= 0x9FFF:
                 continue
             advance = font["hmtx"][glyph_name][0] * 1024 / upm
             if not 900 <= advance <= 1150:
@@ -102,19 +104,40 @@ def reference_han_metrics(path: Path) -> dict:
             glyph_set[glyph_name].draw(bounds_pen)
             if bounds_pen.bounds is None:
                 continue
-            boxes.append(
-                tuple(
+            records.append(
+                (
+                    glyph_name,
+                    tuple(
                     value * 1024 / upm
                     for value in bounds_pen.bounds
+                    ),
                 )
             )
+        boxes = [bounds for _, bounds in records]
         height, center = median_vertical_bounds(boxes)
+        density_records = records
+        if len(density_records) > 2048:
+            step = len(density_records) / 2048
+            density_records = [
+                density_records[int(index * step)]
+                for index in range(2048)
+            ]
+        densities = []
+        for glyph_name, bounds in density_records:
+            area_pen = AreaPen(glyph_set)
+            glyph_set[glyph_name].draw(area_pen)
+            left, bottom, right, top = bounds
+            box_area = (right - left) * (top - bottom)
+            if box_area > 0:
+                densities.append(abs(area_pen.value) * (1024 / upm) ** 2 / box_area)
 
         def normalized(value: int) -> int:
             return round(value * 1024 / upm)
 
         return {
             "sample_size": len(boxes),
+            "density_sample_size": len(densities),
+            "density": statistics.median(densities),
             "height": height,
             "center": center,
             "hhea_ascent": normalized(font["hhea"].ascent),
@@ -126,6 +149,109 @@ def reference_han_metrics(path: Path) -> dict:
             "win_ascent": normalized(font["OS/2"].usWinAscent),
             "win_descent": normalized(font["OS/2"].usWinDescent),
         }
+
+
+def glyph_geometry(glyph):
+    """Return the filled union of the straight contours in one KAGE glyph."""
+    coordinates, end_points, flags = glyph.getCoordinates(None)
+    polygons = []
+    start = 0
+    for end in end_points:
+        if not all(flags[index] & flagOnCurve for index in range(start, end + 1)):
+            raise ValueError(
+                "Automatic density matching requires polygonal KAGE outlines."
+            )
+        points = [tuple(coordinates[index]) for index in range(start, end + 1)]
+        geometry = make_valid(Polygon(points))
+        if not geometry.is_empty:
+            polygons.append(geometry)
+        start = end + 1
+    if not polygons:
+        raise ValueError("A generated glyph has no fillable outline.")
+    return unary_union(polygons)
+
+
+def polygon_parts(geometry) -> list[Polygon]:
+    if isinstance(geometry, Polygon):
+        return [geometry]
+    if isinstance(geometry, MultiPolygon):
+        return list(geometry.geoms)
+    return [
+        polygon
+        for part in getattr(geometry, "geoms", ())
+        for polygon in polygon_parts(part)
+    ]
+
+
+def geometry_to_glyph(geometry):
+    pen = TTGlyphPen(None)
+
+    def draw_ring(coordinates) -> None:
+        points = [(round(x), round(y)) for x, y in list(coordinates)[:-1]]
+        if len(points) < 3:
+            return
+        pen.moveTo(points[0])
+        for point in points[1:]:
+            pen.lineTo(point)
+        pen.closePath()
+
+    for polygon in polygon_parts(geometry):
+        polygon = orient(polygon, sign=-1.0)
+        draw_ring(polygon.exterior.coords)
+        for interior in polygon.interiors:
+            draw_ring(interior.coords)
+    glyph = pen.glyph()
+    if glyph.numberOfContours <= 0:
+        raise ValueError("Density matching removed an entire glyph.")
+    return glyph
+
+
+def geometry_density(geometry) -> float:
+    left, bottom, right, top = geometry.bounds
+    box_area = (right - left) * (top - bottom)
+    return geometry.area / box_area if box_area > 0 else 0
+
+
+def match_glyph_density(glyphs: dict, target_density: float) -> dict:
+    """Choose the closest safe bounded outline inset for the active glyphs."""
+    geometries = {
+        name: glyph_geometry(glyph)
+        for name, glyph in glyphs.items()
+        if name != ".notdef" and glyph.numberOfContours > 0
+    }
+    candidates = [value / 2 for value in range(-6, 9)]
+    results = []
+    for inset in candidates:
+        adjusted = {}
+        safe = True
+        for name, geometry in geometries.items():
+            if inset == 0:
+                candidate = geometry
+            else:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    candidate = geometry.buffer(-inset, join_style="mitre")
+            if candidate.is_empty or not polygon_parts(candidate):
+                safe = False
+                break
+            adjusted[name] = candidate
+        if not safe:
+            continue
+        density = statistics.median(
+            geometry_density(geometry) for geometry in adjusted.values()
+        )
+        results.append((abs(density - target_density), abs(inset), inset, density, adjusted))
+    if not results:
+        raise ValueError("No safe outline-weight adjustment could be found.")
+    _, _, inset, density, adjusted = min(results, key=lambda result: result[:3])
+    if inset:
+        for name, geometry in adjusted.items():
+            glyphs[name] = geometry_to_glyph(geometry)
+    return {
+        "target_density": target_density,
+        "matched_density": density,
+        "inset": inset,
+    }
 
 
 def calibrate_glyphs(glyphs: dict, match_font: Path | None) -> dict | None:
@@ -153,12 +279,14 @@ def calibrate_glyphs(glyphs: dict, match_font: Path | None) -> dict | None:
             )
         glyph.coordinates = coordinates
         glyph.recalcBounds(None)
+    density = match_glyph_density(glyphs, target["density"])
     return {
         **target,
         "source_height": source_height,
         "source_center": source_center,
         "scale": scale,
         "vertical_shift": vertical_shift,
+        **density,
     }
 
 

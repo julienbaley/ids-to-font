@@ -69,11 +69,13 @@ ids-to-font ids.txt \
   --output-directory build
 ```
 
-The tool measures full-width CJK glyphs in the reference font and the active
-IDS glyph set. It then applies one uniform scale and vertical shift to every
-IDS outline and adopts the reference font's normalized vertical metrics. The
-derived scale, shift, and reference sample size are recorded under
-`calibration` in the output mapping.
+The tool measures full-width CJK Unified Ideographs in the reference font and the
+active IDS glyph set. It then applies one uniform scale and vertical shift to every
+IDS outline, adopts the reference font's normalized vertical metrics, and
+selects the closest safe half-unit outline inset or expansion within a bounded
+range to match median ink density. The derived scale, shift, density, outline
+inset, and reference sample sizes are recorded under `calibration` in the
+output mapping.
 
 Matching is optical rather than stylistic: outlines from different type
 designs will retain their individual stroke shapes.

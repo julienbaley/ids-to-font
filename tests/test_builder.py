@@ -42,6 +42,18 @@ def mixed_winding_resolution(ids: str) -> SvgResolution:
     )
 
 
+def separated_strokes_resolution(ids: str) -> SvgResolution:
+    return SvgResolution(
+        requested_ids=ids,
+        resolved_ids=ids,
+        view_box="0 0 95 95",
+        paths=(
+            {"d": "M 10,10 L 20,10 L 20,85 L 10,85 Z"},
+            {"d": "M 75,10 L 85,10 L 85,85 L 75,85 Z"},
+        ),
+    )
+
+
 def contour_areas(font: TTFont, glyph_name: str) -> list[float]:
     glyph = font["glyf"][glyph_name]
     coordinates, end_points, _ = glyph.getCoordinates(font["glyf"])
@@ -87,6 +99,39 @@ def write_reference_font(path: Path) -> None:
             "styleName": "Regular",
             "fullName": "Reference Han",
             "psName": "ReferenceHan",
+        }
+    )
+    builder.setupPost()
+    builder.setupMaxp()
+    builder.font.save(path)
+
+
+def write_light_reference_font(path: Path) -> None:
+    pen = TTGlyphPen(None)
+    for left, right in ((50, 150), (850, 950)):
+        pen.moveTo((left, -100))
+        pen.lineTo((right, -100))
+        pen.lineTo((right, 900))
+        pen.lineTo((left, 900))
+        pen.closePath()
+    builder = FontBuilder(1024, isTTF=True)
+    builder.setupGlyphOrder([".notdef", "uni4E00"])
+    builder.setupCharacterMap({0x4E00: "uni4E00"})
+    builder.setupGlyf({".notdef": TTGlyphPen(None).glyph(), "uni4E00": pen.glyph()})
+    builder.setupHorizontalMetrics({".notdef": (1024, 0), "uni4E00": (1024, 50)})
+    builder.setupHorizontalHeader(ascent=900, descent=-100)
+    builder.setupOS2(
+        sTypoAscender=900,
+        sTypoDescender=-100,
+        usWinAscent=900,
+        usWinDescent=100,
+    )
+    builder.setupNameTable(
+        {
+            "familyName": "Light Reference Han",
+            "styleName": "Regular",
+            "fullName": "Light Reference Han",
+            "psName": "LightReferenceHan",
         }
     )
     builder.setupPost()
@@ -207,6 +252,26 @@ def test_matches_reference_han_size_baseline_and_metrics(tmp_path: Path) -> None
         assert font["hhea"].ascent == 900
         assert font["hhea"].descent == -100
         assert font["hhea"].lineGap == 20
+
+
+def test_match_font_thins_glyphs_for_a_lighter_reference(tmp_path: Path) -> None:
+    reference = tmp_path / "light-reference.ttf"
+    write_light_reference_font(reference)
+    result = build(
+        ["⿰鳥叴"],
+        tmp_path / "output",
+        output_format="ttf",
+        match_font=reference,
+        delay=0,
+        resolver=separated_strokes_resolution,
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+    calibration = mapping["calibration"]
+    assert calibration["outline_inset"] > 0
+    assert calibration["matched_density"] < 0.27
+    with TTFont(result.font_path) as font:
+        glyph = font["glyf"][font.getBestCmap()[0xE000]]
+        assert glyph.numberOfContours == 2
 
 
 def test_rejects_unknown_output_format(tmp_path: Path) -> None:

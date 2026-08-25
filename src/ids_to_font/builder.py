@@ -106,10 +106,20 @@ def build(
                     "calibration": {
                         "reference_font": match_font.name,
                         "reference_sample_size": calibration["sample_size"],
+                        "reference_density_sample_size": calibration[
+                            "density_sample_size"
+                        ],
                         "scale": round(calibration["scale"], 8),
                         "vertical_shift": round(
                             calibration["vertical_shift"], 8
                         ),
+                        "target_density": round(
+                            calibration["target_density"], 8
+                        ),
+                        "matched_density": round(
+                            calibration["matched_density"], 8
+                        ),
+                        "outline_inset": calibration["inset"],
                     }
                 }
                 if calibration is not None and match_font is not None
