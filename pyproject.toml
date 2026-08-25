@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ids-to-font"
+version = "0.1.0"
+description = "Build a WOFF2 font and IDS-to-PUA mapping from newline-delimited IDS expressions"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [
+  {name = "Julien Baley"},
+]
+dependencies = [
+  "Brotli==1.1.0",
+  "fonttools==4.46.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<10",
+]
+
+[project.scripts]
+ids-to-font = "ids_to_font.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

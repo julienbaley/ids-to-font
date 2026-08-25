@@ -1,0 +1,92 @@
+# ids-to-font
+
+Build a presentation-only WOFF2 font and a matching IDS-to-PUA JSON mapping
+from a newline-delimited list of Ideographic Description Sequences (IDS).
+
+The tool resolves each IDS through the Zi.tools API, converts the returned KAGE
+outline to a font glyph, and assigns a code point in the Unicode BMP Private
+Use Area.
+
+## Input
+
+The input is UTF-8 text containing one IDS expression per non-empty
+line:
+
+```text
+⿰鳥叴
+⿱弔口
+⿺辶寺
+```
+
+Whitespace inside an expression, braces, comments, and non-IDS lines are
+rejected. Duplicate lines are harmless.
+
+## Installation
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[test]'
+```
+
+## Usage
+
+```bash
+ids-to-font ids.txt --output-directory build
+```
+
+This writes a content-addressed WOFF2 font and `ids-glyphs.json`:
+
+```text
+build/ids-glyphs-<sha256-prefix>.woff2
+build/ids-glyphs.json
+```
+
+Reuse permanent PUA assignments from an earlier output mapping:
+
+```bash
+ids-to-font ids.txt \
+  --previous-mapping previous/ids-glyphs.json \
+  --output-directory build
+```
+
+Existing assignments are preserved. Code points assigned to expressions that
+are no longer active remain reserved and are never silently reassigned.
+
+Zi.tools requests are made sequentially with a configurable delay:
+
+```bash
+ids-to-font ids.txt --delay 10 --output-directory build
+```
+
+Font metadata that affects byte-for-byte output is explicit:
+
+```bash
+ids-to-font ids.txt \
+  --font-date 2026-08-25 \
+  --copyright "KAGE-generated outlines preserved from Zi.tools." \
+  --output-directory build
+```
+
+The pinned FontTools and Brotli versions, identical inputs, the same previous
+mapping, and the same metadata produce the same WOFF2 bytes.
+
+## Output mapping
+
+The JSON contains:
+
+- `font`, the generated WOFF2 filename;
+- `glyphs`, the active IDS-to-character mappings represented by the font;
+- `assignments`, the permanent assignment history used by later builds;
+- `provider`, the outline provider used for this build.
+
+PUA values are presentation identifiers, not textual data. Consumers must
+always use the JSON mapping paired with the generated font.
+
+## Licensing
+
+The `ids-to-font` software is available under the MIT License.
+
+The glyph outlines returned by Zi.tools are derived from KAGE data. Generated
+fonts and outline data may be subject to the licences and attribution
+requirements of Zi.tools, KAGE, and their underlying glyph sources. This
+software does not relicense downloaded glyph data.
