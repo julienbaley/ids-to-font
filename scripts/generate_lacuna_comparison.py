@@ -12,10 +12,8 @@ from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.ttLib import TTFont
-from shapely.geometry import Polygon
 
 from ids_to_font.lacuna import (
-    FlatteningContourPen,
     extract_surviving_strokes,
     ids_definitions,
     lacuna_path,
@@ -73,7 +71,6 @@ BABELSTONE_OVERRIDES = {
 class FontContour:
     path: str
     bounds: tuple[float, float, float, float]
-    polygon: Polygon | None = None
 
     @property
     def center(self):
@@ -152,25 +149,18 @@ def fit_transform(bounds, target=(4, 4, 91, 91)):
 
 def retain_enclosed_contours(all_contours, retained):
     retained_ids = {id(contour) for contour in retained}
-    changed = True
-    while changed:
-        changed = False
-        parents = [
-            contour
-            for contour in all_contours
-            if id(contour) in retained_ids and contour.polygon is not None
-        ]
-        for contour in all_contours:
-            if id(contour) in retained_ids or contour.polygon is None:
-                continue
-            point = contour.polygon.representative_point()
-            if any(
-                parent.polygon.area > contour.polygon.area
-                and parent.polygon.contains(point)
-                for parent in parents
-            ):
-                retained_ids.add(id(contour))
-                changed = True
+    for contour in all_contours:
+        if id(contour) in retained_ids:
+            continue
+        left, top, right, bottom = contour.bounds
+        if any(
+            parent.bounds[0] <= left
+            and parent.bounds[1] <= top
+            and parent.bounds[2] >= right
+            and parent.bounds[3] >= bottom
+            for parent in retained
+        ):
+            retained_ids.add(id(contour))
     return [
         contour
         for contour in all_contours
@@ -210,15 +200,6 @@ def font_contours(
         left, bottom, right, top = raw_bounds.bounds
         path_pen = SVGPathPen(glyph_set)
         contour.replay(path_pen)
-        flattening_pen = FlatteningContourPen(glyph_set)
-        contour.replay(flattening_pen)
-        points = [
-            (
-                x * scale + x_offset,
-                -y * scale + y_offset,
-            )
-            for x, y in flattening_pen.contours[0].points
-        ]
         contours.append(
             FontContour(
                 path_pen.getCommands(),
@@ -228,7 +209,6 @@ def font_contours(
                     right * scale + x_offset,
                     -bottom * scale + y_offset,
                 ),
-                Polygon(points),
             )
         )
     return contours, (scale, x_offset, y_offset)
