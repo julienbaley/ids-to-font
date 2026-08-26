@@ -5,17 +5,20 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
 from ids_to_font.lacuna import (
+    PROXY_STROKE_COUNTS,
+    align_proxy_resolutions,
+    dotted_path,
+    extract_proxy_strokes,
     ids_definitions,
     matching_characters,
     normalize_same_axis,
     parse_ids,
-    retain_ordered_proxy_strokes,
+    segment_kage_paths,
     serialize_ids,
-    SvgStroke,
     synthesize_from_reference,
     synthesize_from_zi_tools,
 )
-from ids_to_font.zi_tools import EncodedResolution, SvgResolution
+from ids_to_font.zi_tools import SvgResolution
 
 
 IDS_DATA = """\
@@ -102,13 +105,7 @@ def test_synthesizes_dotted_lacuna_from_reference_examples(
         "⿰□古",
         reference,
         IDS_DATA,
-        two_component_resolution,
-        lambda ids: SvgResolution(
-            requested_ids=ids,
-            resolved_ids=ids,
-            view_box="0 0 95 95",
-            paths=two_component_resolution(ids).paths,
-        ),
+        generated_proxy_resolution,
         delay=0,
     )
     assert resolution.metadata == {
@@ -117,38 +114,96 @@ def test_synthesizes_dotted_lacuna_from_reference_examples(
         "layout_example": "\uE101",
         "layout_sample_size": 3,
         "outline_provider": "Zi.tools",
-        "outline_example": "\uE102",
+        "outline_example": "⿰巛古",
         "ids_index": (
             "https://raw.githubusercontent.com/cjkvi/cjkvi-ids/"
             "86b4d16159f0079437870408f0ca186e529015db/ids.txt"
         ),
     }
     assert len(resolution.paths) == 2
-    assert resolution.paths[0]["d"] == "M 45,5 L 90,5 L 90,90 L 45,90 Z"
+    assert resolution.paths[0]["d"] == "M 100,10H190V190H100Z"
     assert resolution.paths[1]["d"].count("M ") > 10
     with TTFont(reference) as font:
         assert set(font.getBestCmap()) == {0xE100, 0xE101, 0xE102}
 
 
-def two_component_resolution(character: str) -> EncodedResolution:
-    return EncodedResolution(
-        character=character,
-        decompositions=(),
+def generated_proxy_resolution(ids: str) -> SvgResolution:
+    proxy = (
+        ids[-1]
+        if ids.startswith("⿳")
+        else ids[3]
+        if ids.startswith("⿰氵⿱")
+        else ids[1]
+    )
+    proxy_count = PROXY_STROKE_COUNTS[proxy]
+    if ids.startswith("⿳"):
+        semantic_bounds = [
+            (10, 10, 190, 50),
+            (10, 70, 190, 120),
+            *[
+                (10 + index * 10, 140, 18 + index * 10, 190)
+                for index in range(proxy_count)
+            ],
+        ]
+    elif ids.startswith("⿰氵⿱"):
+        semantic_bounds = [
+            (10, 10, 30, 30),
+            (10, 45, 30, 65),
+            (10, 80, 30, 100),
+            (15, 20, 25, 90),
+            *[
+                (80 + index * 10, 10, 88 + index * 10, 80)
+                for index in range(proxy_count)
+            ],
+            (80, 110, 80, 180),
+            (80, 110, 180, 110),
+            (180, 110, 180, 180),
+            (80, 180, 180, 180),
+        ]
+    else:
+        semantic_bounds = [
+            *[
+                (10 + index * 10, 10, 18 + index * 10, 190)
+                for index in range(proxy_count)
+            ],
+            (100, 10, 190, 190),
+        ]
+    paths = []
+    for index, (left, top, right, bottom) in enumerate(semantic_bounds):
+        paths.append(
+            {
+                "d": f"M {left},{top}H{right}V{bottom}H{left}Z",
+                "transform": "scale(0.462,0.462)",
+            }
+        )
+        if index == 0:
+            paths.append(
+                {
+                    "d": (
+                        f"M {left + 1},{top + 1}H{left + 3}"
+                        f"V{top + 3}H{left + 1}Z"
+                    ),
+                    "transform": "scale(0.462,0.462)",
+                }
+            )
+    return SvgResolution(
+        requested_ids=ids,
+        resolved_ids=ids,
         view_box="0 0 95 95",
-        paths=(
-            {"d": "M 5,5 L 35,5 L 35,90 L 5,90 Z"},
-            {"d": "M 45,5 L 90,5 L 90,90 L 45,90 Z"},
+        paths=tuple(paths),
+        kage=tuple(
+            f"1:0:0:{left}:{top}:{right}:{bottom}"
+            for left, top, right, bottom in semantic_bounds
         ),
     )
 
 
-def test_uses_capped_delayed_zi_tools_encoded_samples() -> None:
+def test_uses_capped_delayed_zi_tools_proxy_samples() -> None:
     sleeps = []
     resolution = synthesize_from_zi_tools(
         "⿰□古",
         IDS_DATA,
-        two_component_resolution,
-        lambda value: None,
+        generated_proxy_resolution,
         sample_size=3,
         delay=2,
         sleeper=sleeps.append,
@@ -162,26 +217,13 @@ def test_uses_generated_proxies_for_unattested_three_stack() -> None:
     ids_data = "U+753E\t甾\t⿱巛田\n"
     calls = []
 
-    def encoded_resolver(character: str) -> EncodedResolution:
-        raise ValueError(character)
-
     def ids_resolver(ids: str) -> SvgResolution:
         calls.append(ids)
-        return SvgResolution(
-            requested_ids=ids,
-            resolved_ids=ids,
-            view_box="0 0 95 95",
-            paths=(
-                {"d": "M 5,5 L 90,5 L 90,25 L 5,25 Z"},
-                {"d": "M 5,35 L 90,35 L 90,60 L 5,60 Z"},
-                {"d": "M 5,70 L 90,70 L 90,90 L 5,90 Z"},
-            ),
-        )
+        return generated_proxy_resolution(ids)
 
     resolution = synthesize_from_zi_tools(
         "⿱甾□",
         ids_data,
-        encoded_resolver,
         ids_resolver,
         sample_size=3,
         delay=0,
@@ -191,23 +233,60 @@ def test_uses_generated_proxies_for_unattested_three_stack() -> None:
     assert resolution.metadata["layout_sample_size"] == 3
 
 
-def test_removes_root_proxy_paths_by_kage_component_order() -> None:
-    strokes = [
-        SvgStroke({"d": f"M {index},0"}, (index, 0, index + 1, 1))
-        for index in range(27)
+def test_maps_one_kage_stroke_to_multiple_svg_paths() -> None:
+    resolution = generated_proxy_resolution("⿰丯古")
+
+    semantic, groups = segment_kage_paths(resolution)
+
+    assert len(semantic) == 5
+    assert [len(group) for group in groups] == [2, 1, 1, 1, 1]
+
+
+def test_removes_semantic_proxy_strokes_not_fixed_svg_path_count() -> None:
+    resolution = generated_proxy_resolution("⿰丯古")
+
+    retained, _ = extract_proxy_strokes(
+        resolution,
+        parse_ids("⿰□古"),
+        (0,),
+        "丯",
+    )
+
+    assert [stroke.path["d"] for stroke in retained] == [
+        "M 100,10H190V190H100Z"
     ]
 
-    retained = retain_ordered_proxy_strokes(strokes, (0,), "丯")
 
-    assert retained == strokes[11:]
-
-
-def test_removes_right_proxy_paths_without_eating_left_component() -> None:
-    strokes = [
-        SvgStroke({"d": f"M {index},0"}, (index, 0, index + 1, 1))
-        for index in range(25)
+def test_aligns_nested_proxy_block_across_kage_programs() -> None:
+    samples = [
+        (
+            ids,
+            proxy,
+            generated_proxy_resolution(ids),
+        )
+        for proxy in ("丯", "巛", "巿")
+        for ids in [f"⿰氵⿱{proxy}口"]
     ]
 
-    retained = retain_ordered_proxy_strokes(strokes, (1,), "巛")
+    aligned = align_proxy_resolutions(
+        samples,
+        parse_ids("⿰氵⿱□口"),
+        (1, 0),
+    )
 
-    assert retained == strokes[:-15]
+    assert len(aligned) == 3
+    assert all(len(strokes) == 9 for _, strokes, _ in aligned)
+    assert all(
+        all(
+            not (37 <= stroke.bounds[0] and stroke.bounds[3] <= 37)
+            for stroke in strokes
+        )
+        for _, strokes, _ in aligned
+    )
+
+
+def test_dotted_lacuna_uses_only_polygonal_outlines() -> None:
+    path = dotted_path((5, 5, 40, 90))
+
+    assert "A " not in path
+    assert path.count(" L ") > 10

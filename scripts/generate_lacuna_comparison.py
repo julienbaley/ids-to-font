@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,7 +15,7 @@ from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.ttLib import TTFont
 
 from ids_to_font.lacuna import (
-    PROXY_PATH_COUNTS,
+    align_proxy_resolutions,
     extract_surviving_strokes,
     ids_definitions,
     lacuna_path,
@@ -26,7 +25,6 @@ from ids_to_font.lacuna import (
     parse_ids,
     replace_lacuna,
     serialize_ids,
-    svg_strokes,
 )
 from ids_to_font.zi_tools import SvgResolution, fetch_resolution
 
@@ -99,62 +97,6 @@ def closest(samples, region):
             for index in range(4)
         ),
     )
-
-
-def aligned_proxy_strokes(samples, path):
-    retained_counts = [
-        len(sample[2]) - PROXY_PATH_COUNTS[sample[3]]
-        for sample in samples
-    ]
-    retained_count, agreement = Counter(retained_counts).most_common(1)[0]
-    if agreement > 1:
-        samples = [
-            sample
-            for sample, count in zip(samples, retained_counts)
-            if count == retained_count
-        ]
-    else:
-        retained_count = min(retained_counts)
-    if len(path) == 1:
-        return [
-            (
-                sample[0],
-                sample[1],
-                (
-                    sample[2][PROXY_PATH_COUNTS[sample[3]] :]
-                    if path[0] == 0
-                    else sample[2][: -PROXY_PATH_COUNTS[sample[3]]]
-                ),
-            )
-            for sample in samples
-        ]
-    offsets = range(retained_count + 1)
-    offset = min(
-        offsets,
-        key=lambda candidate: sum(
-            statistics.pvariance(
-                (
-                    sample[2][
-                        index
-                        if index < candidate
-                        else index + PROXY_PATH_COUNTS[sample[3]]
-                    ].bounds[dimension]
-                    for sample in samples
-                )
-            )
-            for index in range(retained_count)
-            for dimension in range(4)
-        ),
-    )
-    return [
-        (
-            sample[0],
-            sample[1],
-            sample[2][:offset]
-            + sample[2][offset + PROXY_PATH_COUNTS[sample[3]] :],
-        )
-        for sample in samples
-    ]
 
 
 def valid_region(region):
@@ -303,7 +245,15 @@ def main():
         for pattern in patterns.values()
         for proxy in PROXIES
     }
-    missing = sorted(template for template in templates if template not in cache)
+    missing = sorted(
+        template
+        for template in templates
+        if template not in cache
+        or (
+            cache[template] is not None
+            and "kage" not in cache[template]
+        )
+    )
 
     def fetch_template(template):
         try:
@@ -314,6 +264,7 @@ def main():
             "resolved_ids": resolution.resolved_ids,
             "view_box": resolution.view_box,
             "paths": list(resolution.paths),
+            "kage": list(resolution.kage),
         }
 
     if missing:
@@ -368,33 +319,31 @@ def main():
         return sample[0], region, sample[2], sample[3], len(samples)
 
     def zi_sample(pattern, path):
-        samples = []
+        resolutions = []
         for proxy in PROXIES:
             template = serialize_ids(replace_lacuna(pattern, proxy))
             value = cache.get(template)
-            if value is None:
+            if value is None or not value.get("kage"):
                 continue
             resolution = SvgResolution(
                 requested_ids=template,
                 resolved_ids=value["resolved_ids"],
                 view_box=value["view_box"],
                 paths=tuple(value["paths"]),
+                kage=tuple(value["kage"]),
             )
-            try:
-                strokes = svg_strokes(resolution)
-                _, region = extract_surviving_strokes(
-                    strokes,
-                    pattern,
-                    path,
-                )
-            except ValueError:
-                continue
-            if not valid_region(region):
-                continue
-            samples.append((template, region, strokes, proxy))
+            resolutions.append((template, proxy, resolution))
+        samples = [
+            (name, region, surviving)
+            for name, surviving, region in align_proxy_resolutions(
+                resolutions,
+                pattern,
+                path,
+            )
+            if valid_region(region)
+        ]
         if not samples:
             raise ValueError("No Zi.tools examples.")
-        samples = aligned_proxy_strokes(samples, path)
         region = median_region(samples)
         sample = closest(samples, region)
         return sample[0], region, sample[2], len(samples)

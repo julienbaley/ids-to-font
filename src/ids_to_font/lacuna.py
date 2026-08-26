@@ -6,6 +6,7 @@ import os
 import re
 import statistics
 import time
+from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -42,13 +43,13 @@ CJKVI_IDS_URL = (
     f"{CJKVI_COMMIT}/ids.txt"
 )
 VARIANT_SUFFIX = re.compile(r"\[[A-Z]+\]$")
-LAYOUT_PROXIES = ("丯", "巛", "巿", "爿", "山", "木", "石", "禾", "火", "心")
-PROXY_PATH_COUNTS = {
-    "丯": 11,
-    "巛": 15,
-    "巿": 11,
-    "爿": 10,
-    "𡵂": 18,
+LAYOUT_PROXIES = ("丯", "巛", "巿", "爿", "𡵂")
+PROXY_STROKE_COUNTS = {
+    "丯": 4,
+    "巛": 6,
+    "巿": 5,
+    "爿": 6,
+    "𡵂": 9,
 }
 
 
@@ -332,6 +333,105 @@ def svg_strokes(
     return strokes
 
 
+def kage_strokes(resolution: SvgResolution) -> list[SvgStroke]:
+    if not resolution.kage:
+        raise ValueError("Zi.tools returned no KAGE stroke program.")
+    transform = resolution.paths[0].get("transform", "")
+    if not transform.startswith("scale(") or not transform.endswith(")"):
+        raise ValueError("Zi.tools returned an unsupported KAGE transform.")
+    x_scale, y_scale = (
+        float(value) for value in transform[6:-1].split(",")
+    )
+    strokes = []
+    for index, stroke in enumerate(resolution.kage):
+        fields = stroke.split(":")
+        coordinates = [float(value) for value in fields[3:]]
+        if len(coordinates) < 4 or len(coordinates) % 2:
+            raise ValueError("Zi.tools returned an invalid KAGE stroke.")
+        xs = coordinates[0::2]
+        ys = coordinates[1::2]
+        strokes.append(
+            SvgStroke(
+                {"index": str(index)},
+                (
+                    min(xs) * x_scale,
+                    min(ys) * y_scale,
+                    max(xs) * x_scale,
+                    max(ys) * y_scale,
+                ),
+            )
+        )
+    return strokes
+
+
+def bounds_distance(first, second) -> float:
+    first_center = (
+        (first[0] + first[2]) / 2,
+        (first[1] + first[3]) / 2,
+    )
+    second_center = (
+        (second[0] + second[2]) / 2,
+        (second[1] + second[3]) / 2,
+    )
+    first_size = (first[2] - first[0], first[3] - first[1])
+    second_size = (second[2] - second[0], second[3] - second[1])
+    return sum(
+        (left - right) ** 2
+        for left, right in zip(first_center, second_center)
+    ) + 0.15 * sum(
+        (left - right) ** 2
+        for left, right in zip(first_size, second_size)
+    )
+
+
+def segment_kage_paths(
+    resolution: SvgResolution,
+) -> tuple[list[SvgStroke], list[list[SvgStroke]]]:
+    semantic = kage_strokes(resolution)
+    paths = svg_strokes(resolution)
+    if len(paths) < len(semantic):
+        raise ValueError("Zi.tools returned fewer paths than KAGE strokes.")
+    stroke_count = len(semantic)
+    path_count = len(paths)
+    infinity = float("inf")
+    costs = [
+        [infinity] * (path_count + 1)
+        for _ in range(stroke_count + 1)
+    ]
+    previous = [
+        [None] * (path_count + 1)
+        for _ in range(stroke_count + 1)
+    ]
+    costs[0][0] = 0.0
+    for stroke_index in range(stroke_count):
+        for start in range(path_count):
+            if costs[stroke_index][start] == infinity:
+                continue
+            last_end = path_count - (stroke_count - stroke_index - 1)
+            for end in range(start + 1, last_end + 1):
+                cost = costs[stroke_index][start] + bounds_distance(
+                    semantic[stroke_index].bounds,
+                    item_bounds(paths[start:end]),
+                )
+                if cost < costs[stroke_index + 1][end]:
+                    costs[stroke_index + 1][end] = cost
+                    previous[stroke_index + 1][end] = start
+    boundaries = []
+    end = path_count
+    for stroke_index in range(stroke_count, 0, -1):
+        boundaries.append(end)
+        start = previous[stroke_index][end]
+        if start is None:
+            raise ValueError("Could not align KAGE strokes with SVG paths.")
+        end = start
+    boundaries.reverse()
+    starts = [0, *boundaries[:-1]]
+    return semantic, [
+        paths[start:end]
+        for start, end in zip(starts, boundaries)
+    ]
+
+
 def cluster_items(items: list, axis: int, count: int) -> list[list]:
     values = [item.center[axis] for item in items]
     centers = [
@@ -446,17 +546,159 @@ def extract_surviving_strokes(
     return retained + nested, target_region
 
 
-def retain_ordered_proxy_strokes(
-    strokes: list[SvgStroke],
+def extract_proxy_strokes(
+    resolution: SvgResolution,
+    node: IdsNode,
     path: tuple[int, ...],
     proxy: str,
-) -> list[SvgStroke] | None:
-    count = PROXY_PATH_COUNTS.get(proxy)
-    if count is None or len(path) != 1 or len(strokes) <= count:
-        return None
-    if path[0] == 0:
-        return strokes[count:]
-    return strokes[:-count]
+) -> tuple[list[SvgStroke], tuple[float, float, float, float]]:
+    semantic, path_groups = segment_kage_paths(resolution)
+    clustered, region = extract_surviving_strokes(semantic, node, path)
+    count = PROXY_STROKE_COUNTS[proxy]
+    if len(path) == 1 and path[0] == 0:
+        retained_indices = range(count, len(semantic))
+    elif len(path) == 1 and path[0] == len(node.children) - 1:
+        retained_indices = range(len(semantic) - count)
+    else:
+        retained_indices = sorted(
+            int(stroke.path["index"])
+            for stroke in clustered
+            if stroke.path is not None
+        )
+    return (
+        [
+            stroke
+            for index in retained_indices
+            for stroke in path_groups[index]
+        ],
+        region,
+    )
+
+
+def align_proxy_resolutions(
+    samples: list[tuple[str, str, SvgResolution]],
+    node: IdsNode,
+    path: tuple[int, ...],
+) -> list[
+    tuple[
+        str,
+        list[SvgStroke],
+        tuple[float, float, float, float],
+    ]
+]:
+    if not samples:
+        return []
+    records = []
+    for name, proxy, resolution in samples:
+        semantic, path_groups = segment_kage_paths(resolution)
+        count = PROXY_STROKE_COUNTS[proxy]
+        records.append(
+            (
+                name,
+                proxy,
+                semantic,
+                path_groups,
+                len(semantic) - count,
+            )
+        )
+    retained_count, agreement = Counter(
+        record[4] for record in records
+    ).most_common(1)[0]
+    if agreement > 1:
+        records = [
+            record
+            for record in records
+            if record[4] == retained_count
+        ]
+    elif len(records) == 1:
+        name, proxy, _, _, _ = records[0]
+        surviving, region = extract_proxy_strokes(
+            samples[0][2],
+            node,
+            path,
+            proxy,
+        )
+        return [(name, surviving, region)]
+    elif len(path) == 1 and path[0] in {
+        0,
+        len(node.children) - 1,
+    }:
+        edge_scores = []
+        for count in range(1, min(len(record[2]) for record in records)):
+            retained = [
+                (
+                    record[2][-count:]
+                    if path[0] == 0
+                    else record[2][:count]
+                )
+                for record in records
+            ]
+            edge_scores.append(
+                sum(
+                    statistics.pvariance(
+                        sample[index].bounds[dimension]
+                        for sample in retained
+                    )
+                    for index in range(count)
+                    for dimension in range(4)
+                )
+                / count
+            )
+        retained_count = max(
+            range(1, len(edge_scores)),
+            key=lambda index: edge_scores[index] / max(
+                edge_scores[index - 1],
+                0.001,
+            ),
+        )
+    else:
+        raise ValueError("Zi.tools proxy samples disagree on stroke count.")
+    if len(path) == 1 and path[0] == 0:
+        offset = 0
+    elif len(path) == 1 and path[0] == len(node.children) - 1:
+        offset = retained_count
+    else:
+        offset = min(
+            range(retained_count + 1),
+            key=lambda candidate: sum(
+                statistics.pvariance(
+                    (
+                        (
+                            record[2][index]
+                            if index < candidate
+                            else record[2][
+                                index
+                                + len(record[2])
+                                - retained_count
+                            ]
+                        ).bounds[dimension]
+                        for record in records
+                    )
+                )
+                for index in range(retained_count)
+                for dimension in range(4)
+            ),
+        )
+    aligned = []
+    for name, proxy, semantic, path_groups, _ in records:
+        count = len(semantic) - retained_count
+        _, region = extract_surviving_strokes(semantic, node, path)
+        retained_indices = [
+            *range(offset),
+            *range(offset + count, len(semantic)),
+        ]
+        aligned.append(
+            (
+                name,
+                [
+                    stroke
+                    for index in retained_indices
+                    for stroke in path_groups[index]
+                ],
+                region,
+            )
+        )
+    return aligned
 
 
 def inset_region(
@@ -484,20 +726,30 @@ def dotted_path(region: tuple[float, float, float, float]) -> str:
         centers.extend(((left, y), (right, y)))
     commands = []
     for center_x, center_y in centers:
+        diagonal = radius * 0.70710678
+        points = (
+            (center_x - radius, center_y),
+            (center_x - diagonal, center_y - diagonal),
+            (center_x, center_y - radius),
+            (center_x + diagonal, center_y - diagonal),
+            (center_x + radius, center_y),
+            (center_x + diagonal, center_y + diagonal),
+            (center_x, center_y + radius),
+            (center_x - diagonal, center_y + diagonal),
+        )
         commands.append(
-            f"M {center_x - radius:.4f},{center_y:.4f} "
-            f"A {radius:.4f},{radius:.4f} 0 1 0 "
-            f"{center_x + radius:.4f},{center_y:.4f} "
-            f"A {radius:.4f},{radius:.4f} 0 1 0 "
-            f"{center_x - radius:.4f},{center_y:.4f} Z"
+            f"M {points[0][0]:.4f},{points[0][1]:.4f} "
+            + " ".join(
+                f"L {x:.4f},{y:.4f}"
+                for x, y in points[1:]
+            )
+            + " Z"
         )
     return " ".join(commands)
 
 
 def synthesize_from_samples(
     ids: str,
-    pattern: IdsNode,
-    path: tuple[int, ...],
     layout_samples: list[
         tuple[
             str,
@@ -516,10 +768,9 @@ def synthesize_from_samples(
     ] | None = None,
     outline_provider: str | None = None,
 ) -> SvgResolution:
-    if len(layout_samples) < 2:
+    if not layout_samples:
         raise ValueError(
-            f"{layout_provider} supplied only "
-            f"{len(layout_samples)} usable examples for {ids}."
+            f"{layout_provider} supplied no usable examples for {ids}."
         )
     median_region = tuple(
         statistics.median(sample[2][index] for sample in layout_samples)
@@ -568,20 +819,13 @@ def synthesize_from_samples(
 def collect_zi_tools_samples(
     pattern: IdsNode,
     path: tuple[int, ...],
-    ids_data: str,
-    encoded_resolver: Callable[[str], EncodedResolution],
     ids_resolver: Callable[[str], SvgResolution],
     sample_size: int,
     max_attempts: int,
     delay: float,
     sleeper: Callable[[float], None],
 ) -> list[tuple[str, object, tuple[float, float, float, float]]]:
-    candidates = sorted(
-        matching_characters(pattern, ids_data),
-        key=ord,
-        reverse=True,
-    )
-    samples = []
+    resolutions = []
     attempts = 0
 
     def attempt(callable_, value):
@@ -593,48 +837,24 @@ def collect_zi_tools_samples(
         attempts += 1
         return callable_(value)
 
-    for character in candidates:
-        try:
-            strokes = svg_strokes(attempt(encoded_resolver, character))
-            surviving, region = extract_surviving_strokes(
-                strokes,
-                pattern,
-                path,
-            )
-        except StopIteration:
-            break
-        except (OSError, ValueError):
-            continue
-        samples.append((character, surviving, region))
-        if len(samples) == sample_size:
-            return samples
     for proxy in LAYOUT_PROXIES:
         template = serialize_ids(replace_lacuna(pattern, proxy))
         try:
-            strokes = svg_strokes(attempt(ids_resolver, template))
-            surviving, region = extract_surviving_strokes(
-                strokes,
-                pattern,
-                path,
-            )
-            ordered = retain_ordered_proxy_strokes(strokes, path, proxy)
-            if ordered is not None:
-                surviving = ordered
+            resolution = attempt(ids_resolver, template)
         except StopIteration:
             break
         except (OSError, ValueError):
             continue
-        samples.append((template, surviving, region))
-        if len(samples) == sample_size:
+        resolutions.append((template, proxy, resolution))
+        if len(resolutions) == sample_size:
             break
-    return samples
+    return align_proxy_resolutions(resolutions, pattern, path)
 
 
 def synthesize_from_reference(
     ids: str,
     reference_font: Path,
     ids_data: str,
-    encoded_resolver: Callable[[str], EncodedResolution],
     ids_resolver: Callable[[str], SvgResolution],
     sample_size: int = 8,
     max_attempts: int = 24,
@@ -661,8 +881,6 @@ def synthesize_from_reference(
     outline_samples = collect_zi_tools_samples(
         pattern,
         path,
-        ids_data,
-        encoded_resolver,
         ids_resolver,
         sample_size,
         max_attempts,
@@ -671,8 +889,6 @@ def synthesize_from_reference(
     )
     return synthesize_from_samples(
         ids,
-        pattern,
-        path,
         samples,
         reference_font.name,
         CJKVI_IDS_URL,
@@ -684,7 +900,6 @@ def synthesize_from_reference(
 def synthesize_from_zi_tools(
     ids: str,
     ids_data: str,
-    encoded_resolver: Callable[[str], EncodedResolution],
     ids_resolver: Callable[[str], SvgResolution],
     sample_size: int = 8,
     max_attempts: int = 24,
@@ -696,8 +911,6 @@ def synthesize_from_zi_tools(
     samples = collect_zi_tools_samples(
         pattern,
         path,
-        ids_data,
-        encoded_resolver,
         ids_resolver,
         sample_size,
         max_attempts,
@@ -706,8 +919,6 @@ def synthesize_from_zi_tools(
     )
     return synthesize_from_samples(
         ids,
-        pattern,
-        path,
         samples,
         "Zi.tools",
         CJKVI_IDS_URL,

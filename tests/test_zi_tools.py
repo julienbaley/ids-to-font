@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from ids_to_font.zi_tools import fetch_encoded_resolution, fetch_resolution
+from ids_to_font.zi_tools import (
+    SvgResolution,
+    fetch_encoded_resolution,
+    fetch_resolution,
+)
 
 
 class Response:
@@ -38,6 +42,39 @@ def test_fetches_standard_svg_paths() -> None:
     assert resolution.requested_ids == "⿰丯戈"
     assert resolution.resolved_ids == "⿰丯戈"
     assert [path["d"] for path in resolution.paths] == ["M 0,0", "M 1,1"]
+
+
+def test_fetches_kage_stroke_program() -> None:
+    resolution = fetch_resolution(
+        "⿰丯戈",
+        opener(
+            {
+                "⿰丯戈": {
+                    "lv1": {"match_u_list": []},
+                    "svg": "M 0,0",
+                    "kage": "1:0:0:10:10:20:20$1:0:0:30:30:40:40",
+                }
+            }
+        ),
+    )
+
+    assert resolution.kage == (
+        "1:0:0:10:10:20:20",
+        "1:0:0:30:30:40:40",
+    )
+
+
+def test_preserves_positional_metadata_argument() -> None:
+    resolution = SvgResolution(
+        "ids",
+        "ids",
+        "0 0 95 95",
+        (),
+        {"source": "custom"},
+    )
+
+    assert resolution.metadata == {"source": "custom"}
+    assert resolution.kage == ()
 
 
 def test_uses_single_substitution_returned_by_zi_tools() -> None:

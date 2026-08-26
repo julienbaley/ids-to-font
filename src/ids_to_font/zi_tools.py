@@ -22,6 +22,7 @@ class SvgResolution:
     view_box: str
     paths: tuple[dict[str, str], ...]
     metadata: dict[str, object] = field(default_factory=dict)
+    kage: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,11 @@ def fetch_resolution(
         paths=tuple(
             {"d": path, "transform": "scale(0.462,0.462)"}
             for path in paths
+        ),
+        kage=tuple(
+            stroke
+            for stroke in result.get("kage", "").split("$")
+            if stroke
         ),
     )
 

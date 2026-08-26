@@ -2,8 +2,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from ids_to_font.lacuna import SvgStroke
-
 
 SCRIPT = (
     Path(__file__).parents[1]
@@ -20,7 +18,6 @@ BABELSTONE_OVERRIDES = MODULE.BABELSTONE_OVERRIDES
 FontContour = MODULE.FontContour
 babelstone_paths = MODULE.babelstone_paths
 fit_transform = MODULE.fit_transform
-aligned_proxy_strokes = MODULE.aligned_proxy_strokes
 
 
 def test_uses_all_four_contextual_ze_contours_from_ze() -> None:
@@ -61,36 +58,3 @@ def test_places_complete_zai_outline_in_upper_allocation() -> None:
     assert 4 <= left < right <= 91
     assert 4 <= top < bottom <= 61
     assert bottom < override["region"][1]
-
-
-def proxy_sample(name: str, proxy: str, path_count: int):
-    strokes = [
-        SvgStroke({"d": f"M {index},0"}, (index, 0, index + 1, 1))
-        for index in range(path_count)
-    ]
-    return name, (0, 0, 40, 95), strokes, proxy
-
-
-def test_uses_agreed_residual_count_instead_of_minimum() -> None:
-    samples = [
-        proxy_sample("丯", "丯", 33),
-        proxy_sample("巿", "巿", 33),
-        proxy_sample("爿", "爿", 25),
-    ]
-
-    aligned = aligned_proxy_strokes(samples, (0,))
-
-    assert [sample[0] for sample in aligned] == ["丯", "巿"]
-    assert all(len(sample[2]) == 22 for sample in aligned)
-
-
-def test_keeps_tied_proxy_samples_for_median_selection() -> None:
-    samples = [
-        proxy_sample("巿", "巿", 21),
-        proxy_sample("爿", "爿", 19),
-    ]
-
-    aligned = aligned_proxy_strokes(samples, (0,))
-
-    assert [sample[0] for sample in aligned] == ["巿", "爿"]
-    assert [len(sample[2]) for sample in aligned] == [10, 9]

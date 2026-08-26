@@ -268,7 +268,6 @@ def build(
                         ids,
                         match_font,
                         ids_data,
-                        fetch_encoded_resolution,
                         resolver,
                         delay=delay,
                         sleeper=sleeper,
@@ -278,7 +277,6 @@ def build(
             return synthesize_from_zi_tools(
                 ids,
                 ids_data,
-                fetch_encoded_resolution,
                 resolver,
                 delay=delay,
                 sleeper=sleeper,
