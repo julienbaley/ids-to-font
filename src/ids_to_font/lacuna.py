@@ -43,6 +43,13 @@ CJKVI_IDS_URL = (
 )
 VARIANT_SUFFIX = re.compile(r"\[[A-Z]+\]$")
 LAYOUT_PROXIES = ("丯", "巛", "巿", "爿", "山", "木", "石", "禾", "火", "心")
+PROXY_PATH_COUNTS = {
+    "丯": 11,
+    "巛": 15,
+    "巿": 11,
+    "爿": 10,
+    "𡵂": 18,
+}
 
 
 @dataclass(frozen=True)
@@ -439,6 +446,19 @@ def extract_surviving_strokes(
     return retained + nested, target_region
 
 
+def retain_ordered_proxy_strokes(
+    strokes: list[SvgStroke],
+    path: tuple[int, ...],
+    proxy: str,
+) -> list[SvgStroke] | None:
+    count = PROXY_PATH_COUNTS.get(proxy)
+    if count is None or len(path) != 1 or len(strokes) <= count:
+        return None
+    if path[0] == 0:
+        return strokes[count:]
+    return strokes[:-count]
+
+
 def inset_region(
     region: tuple[float, float, float, float],
 ) -> tuple[float, float, float, float]:
@@ -597,6 +617,9 @@ def collect_zi_tools_samples(
                 pattern,
                 path,
             )
+            ordered = retain_ordered_proxy_strokes(strokes, path, proxy)
+            if ordered is not None:
+                surviving = ordered
         except StopIteration:
             break
         except (OSError, ValueError):

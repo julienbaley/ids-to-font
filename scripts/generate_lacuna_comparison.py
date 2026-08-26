@@ -22,6 +22,7 @@ from ids_to_font.lacuna import (
     normalize_same_axis,
     parse_ids,
     replace_lacuna,
+    retain_ordered_proxy_strokes,
     serialize_ids,
     svg_strokes,
 )
@@ -319,11 +320,19 @@ def main():
                 paths=tuple(value["paths"]),
             )
             try:
+                strokes = svg_strokes(resolution)
                 surviving, region = extract_surviving_strokes(
-                    svg_strokes(resolution),
+                    strokes,
                     pattern,
                     path,
                 )
+                ordered = retain_ordered_proxy_strokes(
+                    strokes,
+                    path,
+                    proxy,
+                )
+                if ordered is not None:
+                    surviving = ordered
             except ValueError:
                 continue
             if not valid_region(region):

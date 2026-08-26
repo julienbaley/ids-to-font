@@ -9,7 +9,9 @@ from ids_to_font.lacuna import (
     matching_characters,
     normalize_same_axis,
     parse_ids,
+    retain_ordered_proxy_strokes,
     serialize_ids,
+    SvgStroke,
     synthesize_from_reference,
     synthesize_from_zi_tools,
 )
@@ -187,3 +189,25 @@ def test_uses_generated_proxies_for_unattested_three_stack() -> None:
     assert calls[:3] == ["⿳巛田丯", "⿳巛田巛", "⿳巛田巿"]
     assert resolution.metadata["layout_example"] == "⿳巛田丯"
     assert resolution.metadata["layout_sample_size"] == 3
+
+
+def test_removes_root_proxy_paths_by_kage_component_order() -> None:
+    strokes = [
+        SvgStroke({"d": f"M {index},0"}, (index, 0, index + 1, 1))
+        for index in range(27)
+    ]
+
+    retained = retain_ordered_proxy_strokes(strokes, (0,), "丯")
+
+    assert retained == strokes[11:]
+
+
+def test_removes_right_proxy_paths_without_eating_left_component() -> None:
+    strokes = [
+        SvgStroke({"d": f"M {index},0"}, (index, 0, index + 1, 1))
+        for index in range(25)
+    ]
+
+    retained = retain_ordered_proxy_strokes(strokes, (1,), "巛")
+
+    assert retained == strokes[:-15]
