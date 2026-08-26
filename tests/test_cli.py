@@ -6,6 +6,7 @@ from ids_to_font.cli import parser
 def test_output_format_defaults_to_woff2() -> None:
     args = parser().parse_args(["ids.txt", "--output-directory", "build"])
     assert args.output_format == "woff2"
+    assert args.mode == "ligature"
 
 
 def test_output_format_accepts_ttf() -> None:
@@ -47,11 +48,31 @@ def test_accepts_unicode_mode_and_latex_primary_font() -> None:
     assert str(args.latex_primary_font) == "primary.ttf"
 
 
-def test_accepts_ligature_mode() -> None:
+def test_accepts_explicit_ligature_mode() -> None:
     args = parser().parse_args(
         ["ids.txt", "--mode", "ligature", "--output-directory", "build"]
     )
     assert args.mode == "ligature"
+
+
+def test_rejects_removed_pua_mode() -> None:
+    with pytest.raises(SystemExit):
+        parser().parse_args(
+            ["ids.txt", "--mode", "pua", "--output-directory", "build"]
+        )
+
+
+def test_rejects_removed_previous_mapping_option() -> None:
+    with pytest.raises(SystemExit):
+        parser().parse_args(
+            [
+                "ids.txt",
+                "--previous-mapping",
+                "previous.json",
+                "--output-directory",
+                "build",
+            ]
+        )
 
 
 def test_output_format_rejects_unknown_value() -> None:

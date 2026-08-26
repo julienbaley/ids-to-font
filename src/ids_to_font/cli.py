@@ -6,14 +6,14 @@ import argparse
 import sys
 from pathlib import Path
 
-from .builder import build, build_encoded, build_ligature
+from .builder import build, build_encoded
 from .input import read_characters, read_ids
 
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description=(
-            "Build a PUA or required-ligature IDS font, or an encoded Unicode supplement "
+            "Build a required-ligature IDS font or an encoded Unicode supplement "
             "from newline-delimited input."
         )
     )
@@ -24,20 +24,15 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--mode",
-        choices=("pua", "ligature", "unicode"),
-        default="pua",
-        help="Input and cmap mode (default: pua)",
+        choices=("ligature", "unicode"),
+        default="ligature",
+        help="Input and cmap mode (default: ligature)",
     )
     result.add_argument(
         "--output-directory",
         type=Path,
         required=True,
         help="Directory for the generated font and mapping",
-    )
-    result.add_argument(
-        "--previous-mapping",
-        type=Path,
-        help="Earlier generated JSON mapping whose PUA assignments must be reused",
     )
     result.add_argument("--family-name")
     result.add_argument("--basename")
@@ -86,8 +81,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.mode == "unicode":
-            if args.previous_mapping is not None:
-                raise ValueError("--previous-mapping is only valid in PUA mode.")
             result = build_encoded(
                 read_characters(args.input),
                 args.output_directory,
@@ -100,24 +93,6 @@ def main(argv: list[str] | None = None) -> int:
                 latex_primary_font=args.latex_primary_font,
                 delay=args.delay,
             )
-        elif args.mode == "ligature":
-            if args.previous_mapping is not None:
-                raise ValueError("--previous-mapping is only valid in PUA mode.")
-            if args.latex_primary_font is not None:
-                raise ValueError(
-                    "--latex-primary-font is only valid in Unicode mode."
-                )
-            result = build_ligature(
-                read_ids(args.input),
-                args.output_directory,
-                family_name=args.family_name or "IDS Glyphs",
-                basename=args.basename or "ids-glyphs",
-                output_format=args.output_format,
-                font_date=args.font_date,
-                copyright_notice=args.copyright,
-                match_font=args.match_font,
-                delay=args.delay,
-            )
         else:
             if args.latex_primary_font is not None:
                 raise ValueError(
@@ -126,7 +101,6 @@ def main(argv: list[str] | None = None) -> int:
             result = build(
                 read_ids(args.input),
                 args.output_directory,
-                previous_mapping=args.previous_mapping,
                 family_name=args.family_name or "IDS Glyphs",
                 basename=args.basename or "ids-glyphs",
                 output_format=args.output_format,
@@ -149,9 +123,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if path is not None
         )
-        + " "
-        f"({result.glyph_count} active glyphs; "
-        f"{result.reserved_assignment_count} reserved assignments)."
+        + f" ({result.glyph_count} active glyphs)."
     )
     return 0
 

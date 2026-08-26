@@ -10,11 +10,6 @@ from pathlib import Path
 from typing import Callable
 
 from .font import build_font, build_ligature_font
-from .mapping import (
-    assign_pua,
-    load_previous_assignments,
-    serialize_assignments,
-)
 from .zi_tools import (
     PROVIDER,
     EncodedResolution,
@@ -30,7 +25,6 @@ class BuildResult:
     mapping_path: Path
     style_path: Path | None
     glyph_count: int
-    reserved_assignment_count: int
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -235,93 +229,6 @@ def save_font(
 def build(
     expressions: list[str],
     output_directory: Path,
-    previous_mapping: Path | None = None,
-    family_name: str = "IDS Glyphs",
-    basename: str = "ids-glyphs",
-    output_format: str = "woff2",
-    font_date: str = "1970-01-01",
-    copyright_notice: str = "KAGE-generated outlines preserved from Zi.tools.",
-    match_font: Path | None = None,
-    delay: float = 10,
-    resolver: Callable[[str], SvgResolution] = fetch_resolution,
-    sleeper: Callable[[float], None] = time.sleep,
-) -> BuildResult:
-    if delay < 0:
-        raise ValueError("Request delay must not be negative.")
-    if output_format not in {"woff2", "ttf"}:
-        raise ValueError("Output format must be 'woff2' or 'ttf'.")
-    active_ids = sorted(set(expressions))
-    if not active_ids:
-        raise ValueError("At least one IDS expression is required.")
-    previous = load_previous_assignments(previous_mapping)
-    assignments = assign_pua(active_ids, previous)
-    resolutions = resolve_all(active_ids, resolver, delay, sleeper)
-    font, calibration = build_font(
-        resolutions,
-        assignments,
-        family_name,
-        font_date,
-        copyright_notice,
-        output_format,
-        match_font,
-    )
-    font_path = save_font(font, output_directory, basename, output_format)
-
-    style_path = None
-    if output_format == "ttf":
-        style_path = output_directory / f"{basename}.sty"
-        write_latex_package(
-            style_path,
-            basename,
-            font_path,
-            font_date,
-            {ids: assignments[ids] for ids in active_ids},
-        )
-
-    mapping_path = output_directory / f"{basename}.json"
-    write_json(
-        mapping_path,
-        {
-            "schema_version": "1.0",
-            "font_family": family_name,
-            "font": font_path.name,
-            "font_format": output_format,
-            "mode": "pua",
-            **(
-                {"latex_package": style_path.name}
-                if style_path is not None
-                else {}
-            ),
-            "provider": PROVIDER,
-            "glyph_license": "GPL-3.0-only",
-            **calibration_metadata(calibration, match_font),
-            "glyphs": {
-                ids: {
-                    "character": chr(assignments[ids]),
-                    "codepoint": f"U+{assignments[ids]:04X}",
-                    **(
-                        {"resolved_ids": resolutions[ids].resolved_ids}
-                        if resolutions[ids].resolved_ids != ids
-                        else {}
-                    ),
-                }
-                for ids in active_ids
-            },
-            "assignments": serialize_assignments(assignments),
-        },
-    )
-    return BuildResult(
-        font_path=font_path,
-        mapping_path=mapping_path,
-        style_path=style_path,
-        glyph_count=len(active_ids),
-        reserved_assignment_count=len(assignments),
-    )
-
-
-def build_ligature(
-    expressions: list[str],
-    output_directory: Path,
     family_name: str = "IDS Glyphs",
     basename: str = "ids-glyphs",
     output_format: str = "woff2",
@@ -393,7 +300,6 @@ def build_ligature(
         mapping_path=mapping_path,
         style_path=style_path,
         glyph_count=len(active_ids),
-        reserved_assignment_count=0,
     )
 
 
@@ -510,5 +416,4 @@ def build_encoded(
         mapping_path=mapping_path,
         style_path=style_path,
         glyph_count=len(active_characters),
-        reserved_assignment_count=0,
     )

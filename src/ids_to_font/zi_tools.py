@@ -54,7 +54,7 @@ def fetch_resolution(
     if len(unicode_matches) == 1:
         raise ValueError(
             f"{ids} resolves directly to Unicode {unicode_matches[0]}; "
-            "it does not require a PUA font glyph."
+            "use Unicode supplement mode for this character."
         )
     paths = [path for path in result.get("svg", "").split("|") if path]
     resolved_ids = ids

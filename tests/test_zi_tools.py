@@ -59,7 +59,7 @@ def test_uses_single_substitution_returned_by_zi_tools() -> None:
 
 
 def test_rejects_ids_that_resolve_directly_to_unicode() -> None:
-    with pytest.raises(ValueError, match="does not require"):
+    with pytest.raises(ValueError, match="Unicode supplement mode"):
         fetch_resolution(
             "⿰兌攵",
             opener(

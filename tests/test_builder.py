@@ -7,7 +7,7 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
 
-from ids_to_font.builder import build, build_encoded, build_ligature
+from ids_to_font.builder import build, build_encoded
 from ids_to_font.zi_tools import EncodedResolution, SvgResolution
 
 
@@ -166,18 +166,23 @@ def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
     assert mapping["font_format"] == "woff2"
     assert result.style_path is None
     assert set(mapping["glyphs"]) == {"⿰鳥叴", "⿱弔口"}
-    assert mapping["assignments"] == {
-        "⿰鳥叴": "U+E000",
-        "⿱弔口": "U+E001",
+    assert mapping["mode"] == "ligature"
+    assert "assignments" not in mapping
+    assert set(TTFont(result.font_path).getBestCmap()) == {
+        0x2FF0,
+        0x2FF1,
+        0x53E3,
+        0x53F4,
+        0x5F14,
+        0x9CE5,
     }
-    assert set(TTFont(result.font_path).getBestCmap()) == {0xE000, 0xE001}
     assert mapping["glyph_license"] == "GPL-3.0-only"
 
 
 def test_builds_required_ligature_font_with_zero_width_components(
     tmp_path: Path,
 ) -> None:
-    result = build_ligature(
+    result = build(
         ["⿰鳥叴", "⿱弔口"],
         tmp_path,
         output_format="ttf",
@@ -208,7 +213,7 @@ def test_builds_required_ligature_font_with_zero_width_components(
 
 
 def test_ligature_mode_reuses_component_placeholders(tmp_path: Path) -> None:
-    result = build_ligature(
+    result = build(
         ["⿰鳥叴", "⿲鳥叴鳥"],
         tmp_path,
         output_format="ttf",
@@ -262,7 +267,7 @@ def test_builds_ttf_with_the_same_cmap(tmp_path: Path) -> None:
     assert mapping["latex_package"] == "ids-glyphs.sty"
 
 
-def test_ttf_package_maps_ids_expressions_to_pua_characters(
+def test_ttf_package_validates_and_emits_literal_ids(
     tmp_path: Path,
 ) -> None:
     result = build(
@@ -274,8 +279,9 @@ def test_ttf_package_maps_ids_expressions_to_pua_characters(
     )
     style = result.style_path.read_text(encoding="utf-8")
     assert f"{{{result.font_path.name}}}" in style
-    assert "{ ⿰鳥叴 } { \\char_generate:nn { \"E000 } { 12 } }" in style
-    assert "{ ⿱弔口 } { \\char_generate:nn { \"E001 } { 12 } }" in style
+    assert r"\prop_gput:Nnn \g__ids_to_font_supported_prop { ⿰鳥叴 }" in style
+    assert r"\prop_gput:Nnn \g__ids_to_font_supported_prop { ⿱弔口 }" in style
+    assert r"\char_generate:nn" not in style
     assert r"\NewDocumentCommand \ids { m }" in style
     assert r"\NewDocumentCommand \idschar { m }" in style
 
@@ -340,7 +346,8 @@ def test_generated_glyphs_mark_overlapping_contours(tmp_path: Path) -> None:
         resolver=resolution,
     )
     with TTFont(result.font_path) as font:
-        glyph_name = font.getBestCmap()[0xE000]
+        mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+        glyph_name = mapping["glyphs"]["⿰鳥叴"]["glyph"]
         glyph = font["glyf"][glyph_name]
         assert glyph.numberOfContours > 0
         assert glyph.flags[0] & flagOverlapSimple
@@ -357,7 +364,8 @@ def test_separately_filled_paths_use_consistent_contour_winding(
         resolver=mixed_winding_resolution,
     )
     with TTFont(result.font_path) as font:
-        glyph_name = font.getBestCmap()[0xE000]
+        mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+        glyph_name = mapping["glyphs"]["⿰鳥叴"]["glyph"]
         areas = contour_areas(font, glyph_name)
         assert len(areas) == 2
         assert all(area < 0 for area in areas)
@@ -378,7 +386,8 @@ def test_matches_reference_han_size_baseline_and_metrics(tmp_path: Path) -> None
     assert mapping["calibration"]["reference_font"] == "reference.ttf"
     assert mapping["calibration"]["reference_sample_size"] == 1
     with TTFont(result.font_path) as font:
-        glyph = font["glyf"][font.getBestCmap()[0xE000]]
+        glyph_name = mapping["glyphs"]["⿰鳥叴"]["glyph"]
+        glyph = font["glyf"][glyph_name]
         glyph.recalcBounds(font["glyf"])
         assert 999 <= glyph.yMax - glyph.yMin <= 1001
         assert 399 <= (glyph.yMax + glyph.yMin) / 2 <= 401
@@ -403,7 +412,8 @@ def test_match_font_thins_glyphs_for_a_lighter_reference(tmp_path: Path) -> None
     assert calibration["outline_inset"] > 0
     assert calibration["matched_density"] < 0.27
     with TTFont(result.font_path) as font:
-        glyph = font["glyf"][font.getBestCmap()[0xE000]]
+        glyph_name = mapping["glyphs"]["⿰鳥叴"]["glyph"]
+        glyph = font["glyf"][glyph_name]
         assert glyph.numberOfContours == 2
 
 
@@ -434,29 +444,3 @@ def test_font_date_changes_only_requested_metadata(tmp_path: Path) -> None:
         assert font["head"].created == 3870460800
         names = {record.nameID: record.toUnicode() for record in font["name"].names}
         assert names[3] == "IDS Glyphs 2026-08-25"
-
-
-def test_previous_mapping_keeps_retired_assignment_reserved(tmp_path: Path) -> None:
-    previous = tmp_path / "previous.json"
-    previous.write_text(
-        json.dumps(
-            {
-                "assignments": {
-                    "⿰甲乙": "U+E000",
-                    "⿱丙丁": "U+E001",
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    output = tmp_path / "output"
-    result = build(
-        ["⿰甲乙", "⿴戊己"],
-        output,
-        previous_mapping=previous,
-        delay=0,
-        resolver=resolution,
-    )
-    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
-    assert mapping["assignments"]["⿱丙丁"] == "U+E001"
-    assert mapping["glyphs"]["⿴戊己"]["codepoint"] == "U+E002"

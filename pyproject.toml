@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ids-to-font"
 version = "0.1.0"
-description = "Build PUA IDS fonts and encoded Unicode supplements from Zi.tools outlines"
+description = "Build IDS ligature fonts and encoded Unicode supplements from Zi.tools outlines"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}

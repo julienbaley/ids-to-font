@@ -3,15 +3,13 @@
 Build presentation-only WOFF2 or TTF fonts from Ideographic Description
 Sequences (IDS) or encoded Unicode characters.
 
-PUA mode resolves each IDS through the Zi.tools API and assigns a permanent
-code point in the Unicode BMP Private Use Area. Unicode mode accepts existing
-characters, retrieves their outlines and decompositions from Zi.tools, and
-maps each glyph to its real Unicode code point.
+The default IDS mode keeps text literal and uses the OpenType `rlig` feature
+to replace supported sequences with generated outlines. Unicode supplement
+mode accepts existing characters, retrieves their outlines and decompositions
+from Zi.tools, and maps each glyph to its real Unicode code point.
 
-Ligature mode keeps IDS text literal and uses the OpenType `rlig` feature to
-replace supported sequences with their generated outlines. The font's
-component glyphs are zero-width placeholders, so this font must be used in an
-explicit IDS font run rather than as a global fallback.
+IDS component glyphs are zero-width placeholders, so generated IDS fonts must
+be used in explicit font runs rather than as global fallbacks.
 
 Generated TrueType outlines are marked as containing overlapping contours so
 stroke intersections retain the source SVG's filled appearance. Each
@@ -19,7 +17,7 @@ separately filled SVG stroke is also normalized to the same contour direction
 before the paths are combined into one font glyph; this prevents
 opposite-winding strokes from becoming holes.
 
-## PUA input
+## IDS input
 
 The input is UTF-8 text containing one IDS expression per non-empty
 line:
@@ -59,19 +57,10 @@ python3 -m venv .venv
 ids-to-font ids.txt --output-directory build
 ```
 
-To build a literal-IDS required-ligature font:
-
-```bash
-ids-to-font ids.txt \
-  --mode ligature \
-  --output-directory build
-```
-
 The generated font maps each scalar occurring in the input to a zero-width
-placeholder and applies an `rlig` substitution for each complete IDS. No PUA
-code points or previous mapping are used; the document text remains the
-literal IDS sequence. For TTF output, the generated LaTeX package validates
-supported expressions and emits them unchanged:
+placeholder and applies an `rlig` substitution for each complete IDS. The
+document text remains the literal IDS sequence. For TTF output, the generated
+LaTeX package validates supported expressions and emits them unchanged:
 
 ```tex
 \usepackage{ids-glyphs}
@@ -112,15 +101,14 @@ LuaLaTeX:
 Received text \ids{⿰鳥叴} continues here.
 ```
 
-`\ids{...}` selects the generated font and resolves the IDS expression to its
-assigned PUA character. For advanced formatting, `\idsfont` is the generated
-font switch and `\idschar{...}` performs only the lookup. An unknown IDS
-expression produces a LaTeX error rather than silently displaying the wrong
-glyph.
+`\ids{...}` validates the expression, selects the generated font, and emits
+the literal IDS for OpenType shaping. For advanced formatting, `\idsfont` is
+the generated font switch and `\idschar{...}` is equivalent to `\ids{...}`.
+An unknown IDS expression produces a LaTeX error rather than disappearing as
+zero-width component glyphs.
 
 The default format is `woff2`; the `.sty` package is generated only for TTF
-output. Run the command once per desired format; both formats use the same PUA
-assignments when given the same previous mapping.
+output. Run the command once per desired format.
 
 ## Unicode supplements
 
@@ -174,9 +162,7 @@ The decomposition aliases remain available as a convenient alternative:
 \ids{⿰𦁆糸}
 ```
 
-This emits the real character `𬘄` from the supplement font. Generated PUA and
-Unicode packages are composable: both add entries to the same `\ids{...}`
-lookup command, while each entry selects its own generated font.
+This emits the real character `𬘄` from the supplement font.
 
 ## Matching a companion Han font
 
@@ -200,17 +186,6 @@ output mapping.
 Matching is optical rather than stylistic: outlines from different type
 designs will retain their individual stroke shapes.
 
-In PUA mode, reuse permanent assignments from an earlier output mapping:
-
-```bash
-ids-to-font ids.txt \
-  --previous-mapping previous/ids-glyphs.json \
-  --output-directory build
-```
-
-Existing assignments are preserved. Code points assigned to expressions that
-are no longer active remain reserved and are never silently reassigned.
-
 Zi.tools requests are made sequentially with a configurable delay:
 
 ```bash
@@ -226,24 +201,20 @@ ids-to-font ids.txt \
   --output-directory build
 ```
 
-The pinned FontTools and Brotli versions, identical inputs, the same previous
-mapping, format, and metadata produce the same font bytes.
+The pinned FontTools and Brotli versions, identical inputs, format, and
+metadata produce the same font bytes.
 
 ## Output mapping
 
 The JSON contains:
 
-- `mode`, either `pua` or `unicode`;
+- `mode`, either `ligature` or `unicode`;
 - `font`, the generated font filename;
 - `font_format`, either `woff2` or `ttf`;
 - `latex_package`, the generated `.sty` filename for TTF output;
-- `glyphs`, the active glyphs and their code points;
-- `assignments`, the permanent assignment history in PUA mode;
+- `glyphs`, the active IDS output glyph names or encoded code points;
 - `decompositions` and `preferred_decomposition` for encoded glyphs;
 - `provider`, the outline provider used for this build.
-
-PUA values are presentation identifiers, not textual data. Consumers must
-always use the JSON mapping paired with the generated font.
 
 ## Licensing
 
