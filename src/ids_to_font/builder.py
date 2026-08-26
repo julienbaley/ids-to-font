@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .font import build_font
+from .font import build_font, build_ligature_font
 from .mapping import (
     assign_pua,
     load_previous_assignments,
@@ -47,6 +47,7 @@ def write_latex_package(
     font_date: str,
     aliases: dict[str, int],
     latex_primary_font: Path | None = None,
+    literal_ids: bool = False,
 ) -> None:
     suffix = hashlib.sha256(package_name.encode("utf-8")).hexdigest()[:10].translate(
         str.maketrans("0123456789", "abcdefghij")
@@ -56,13 +57,72 @@ def write_latex_package(
     mappings = "\n".join(
         "\n".join(
             (
-                r"\prop_gput:Nnn \g__ids_to_font_character_prop"
-                f" {{ {ids} }} {{ \\char_generate:nn {{ \"{codepoint:X} }} {{ 12 }} }}",
+                (
+                    r"\prop_gput:Nnn \g__ids_to_font_supported_prop"
+                    f" {{ {ids} }} {{ }}"
+                )
+                if literal_ids
+                else (
+                    r"\prop_gput:Nnn \g__ids_to_font_character_prop"
+                    f" {{ {ids} }} {{ \\char_generate:nn {{ \"{codepoint:X} }} {{ 12 }} }}"
+                ),
                 r"\prop_gput:Nnn \g__ids_to_font_font_prop"
                 f" {{ {ids} }} {{ {font_command} }}",
             )
         )
         for ids, codepoint in sorted(aliases.items())
+    )
+    character_definition = (
+        r"""
+    \cs_new_protected:Npn \__ids_to_font_literal:n #1
+      {
+        \prop_if_in:NnTF \g__ids_to_font_supported_prop { #1 }
+          { #1 }
+          { \msg_error:nnn { ids-to-font } { unknown-expression } { #1 } }
+      }
+"""
+        if literal_ids
+        else r"""
+    \cs_new_protected:Npn \__ids_to_font_character:n #1
+      {
+    \prop_get:NnNTF
+      \g__ids_to_font_character_prop { #1 } \l_tmpa_tl
+      { \tl_use:N \l_tmpa_tl }
+      { \msg_error:nnn { ids-to-font } { unknown-expression } { #1 } }
+      }
+"""
+    )
+    lookup_definition = (
+        ""
+        if literal_ids
+        else r"""
+    \cs_new_protected:Npn \__ids_to_font_lookup:n #1
+      {
+    \prop_get:NnNTF \g__ids_to_font_font_prop { #1 } \l_tmpa_tl
+      {
+        \group_begin:
+        \tl_use:N \l_tmpa_tl
+        \__ids_to_font_character:n { #1 }
+        \group_end:
+      }
+      { \msg_error:nnn { ids-to-font } { unknown-expression } { #1 } }
+      }
+"""
+    )
+    character_props = (
+        r"\prop_new:N \g__ids_to_font_supported_prop"
+        if literal_ids
+        else r"\prop_new:N \g__ids_to_font_character_prop"
+    )
+    ids_command = (
+        rf"{{ \group_begin: {font_command} \__ids_to_font_literal:n {{ #1 }} \group_end: }}"
+        if literal_ids
+        else r"{ \__ids_to_font_lookup:n { #1 } }"
+    )
+    idschar_command = (
+        rf"\group_begin: {font_command} \__ids_to_font_literal:n {{ #1 }} \group_end:"
+        if literal_ids
+        else r"\__ids_to_font_character:n { #1 }"
     )
     fallback = ""
     if latex_primary_font is not None:
@@ -98,38 +158,21 @@ def write_latex_package(
 
 \ExplSyntaxOn
 \newfontfamily{font_command}[Path=./]{{{font_path.name}}}
-\prop_if_exist:NF \g__ids_to_font_character_prop
+\prop_if_exist:NF \g__ids_to_font_font_prop
   {{
-    \prop_new:N \g__ids_to_font_character_prop
+{character_props}
     \prop_new:N \g__ids_to_font_font_prop
 
     \msg_new:nnn {{ ids-to-font }} {{ unknown-expression }}
       {{ Unknown~IDS~expression~'#1'. }}
 
-    \cs_new_protected:Npn \__ids_to_font_character:n #1
-      {{
-        \prop_get:NnNTF
-          \g__ids_to_font_character_prop {{ #1 }} \l_tmpa_tl
-          {{ \tl_use:N \l_tmpa_tl }}
-          {{ \msg_error:nnn {{ ids-to-font }} {{ unknown-expression }} {{ #1 }} }}
-      }}
-
-    \cs_new_protected:Npn \__ids_to_font_lookup:n #1
-      {{
-        \prop_get:NnNTF \g__ids_to_font_font_prop {{ #1 }} \l_tmpa_tl
-          {{
-            \group_begin:
-            \tl_use:N \l_tmpa_tl
-            \__ids_to_font_character:n {{ #1 }}
-            \group_end:
-          }}
-          {{ \msg_error:nnn {{ ids-to-font }} {{ unknown-expression }} {{ #1 }} }}
-      }}
+{character_definition}
+{lookup_definition}
 
     \NewDocumentCommand \idschar {{ m }}
-      {{ \__ids_to_font_character:n {{ #1 }} }}
+  {{ {idschar_command} }}
     \NewDocumentCommand \ids {{ m }}
-      {{ \__ids_to_font_lookup:n {{ #1 }} }}
+      {ids_command}
   }}
 {mappings}
 \cs_if_exist:NF \idsfont
@@ -273,6 +316,84 @@ def build(
         style_path=style_path,
         glyph_count=len(active_ids),
         reserved_assignment_count=len(assignments),
+    )
+
+
+def build_ligature(
+    expressions: list[str],
+    output_directory: Path,
+    family_name: str = "IDS Glyphs",
+    basename: str = "ids-glyphs",
+    output_format: str = "woff2",
+    font_date: str = "1970-01-01",
+    copyright_notice: str = "KAGE-generated outlines preserved from Zi.tools.",
+    match_font: Path | None = None,
+    delay: float = 10,
+    resolver: Callable[[str], SvgResolution] = fetch_resolution,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> BuildResult:
+    if delay < 0:
+        raise ValueError("Request delay must not be negative.")
+    if output_format not in {"woff2", "ttf"}:
+        raise ValueError("Output format must be 'woff2' or 'ttf'.")
+    active_ids = sorted(set(expressions))
+    if not active_ids:
+        raise ValueError("At least one IDS expression is required.")
+    resolutions = resolve_all(active_ids, resolver, delay, sleeper)
+    font, calibration, output_names = build_ligature_font(
+        resolutions,
+        family_name,
+        font_date,
+        copyright_notice,
+        output_format,
+        match_font,
+    )
+    font_path = save_font(font, output_directory, basename, output_format)
+
+    style_path = None
+    if output_format == "ttf":
+        style_path = output_directory / f"{basename}.sty"
+        write_latex_package(
+            style_path,
+            basename,
+            font_path,
+            font_date,
+            {ids: 0 for ids in active_ids},
+            literal_ids=True,
+        )
+
+    mapping_path = output_directory / f"{basename}.json"
+    write_json(
+        mapping_path,
+        {
+            "schema_version": "1.0",
+            "font_family": family_name,
+            "font": font_path.name,
+            "font_format": output_format,
+            "mode": "ligature",
+            **({"latex_package": style_path.name} if style_path is not None else {}),
+            "provider": PROVIDER,
+            "glyph_license": "GPL-3.0-only",
+            **calibration_metadata(calibration, match_font),
+            "glyphs": {
+                ids: {
+                    "glyph": output_names[ids],
+                    **(
+                        {"resolved_ids": resolutions[ids].resolved_ids}
+                        if resolutions[ids].resolved_ids != ids
+                        else {}
+                    ),
+                }
+                for ids in active_ids
+            },
+        },
+    )
+    return BuildResult(
+        font_path=font_path,
+        mapping_path=mapping_path,
+        style_path=style_path,
+        glyph_count=len(active_ids),
+        reserved_assignment_count=0,
     )
 
 

@@ -47,6 +47,13 @@ def test_accepts_unicode_mode_and_latex_primary_font() -> None:
     assert str(args.latex_primary_font) == "primary.ttf"
 
 
+def test_accepts_ligature_mode() -> None:
+    args = parser().parse_args(
+        ["ids.txt", "--mode", "ligature", "--output-directory", "build"]
+    )
+    assert args.mode == "ligature"
+
+
 def test_output_format_rejects_unknown_value() -> None:
     with pytest.raises(SystemExit):
         parser().parse_args(

@@ -7,7 +7,7 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
 
-from ids_to_font.builder import build, build_encoded
+from ids_to_font.builder import build, build_encoded, build_ligature
 from ids_to_font.zi_tools import EncodedResolution, SvgResolution
 
 
@@ -172,6 +172,51 @@ def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
     }
     assert set(TTFont(result.font_path).getBestCmap()) == {0xE000, 0xE001}
     assert mapping["glyph_license"] == "GPL-3.0-only"
+
+
+def test_builds_required_ligature_font_with_zero_width_components(
+    tmp_path: Path,
+) -> None:
+    result = build_ligature(
+        ["⿰鳥叴", "⿱弔口"],
+        tmp_path,
+        output_format="ttf",
+        delay=0,
+        resolver=resolution,
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+    assert mapping["mode"] == "ligature"
+    assert "assignments" not in mapping
+    style = result.style_path.read_text(encoding="utf-8")
+    assert r"\__ids_to_font_literal:n" in style
+    assert r"\prop_gput:Nnn \g__ids_to_font_supported_prop" in style
+    assert r"\char_generate:nn" not in style
+    with TTFont(result.font_path) as font:
+        cmap = font.getBestCmap()
+        assert set(cmap) == {0x2FF0, 0x2FF1, 0x53E3, 0x53F4, 0x5F14, 0x9CE5}
+        assert all(font["hmtx"][name] == (0, 0) for name in cmap.values())
+        assert all(
+            record["glyph"] not in cmap.values()
+            for record in mapping["glyphs"].values()
+        )
+        features = font["GSUB"].table.FeatureList.FeatureRecord
+        assert [record.FeatureTag for record in features] == ["rlig"]
+        lookup = font["GSUB"].table.LookupList.Lookup[0]
+        ligature = lookup.SubTable[0].ligatures["uni2FF0"][0]
+        assert ligature.LigGlyph == "ids00000"
+        assert ligature.CompCount == 3
+
+
+def test_ligature_mode_reuses_component_placeholders(tmp_path: Path) -> None:
+    result = build_ligature(
+        ["⿰鳥叴", "⿲鳥叴鳥"],
+        tmp_path,
+        output_format="ttf",
+        delay=0,
+        resolver=resolution,
+    )
+    with TTFont(result.font_path) as font:
+        assert set(font.getBestCmap()) == {0x2FF0, 0x2FF2, 0x53F4, 0x9CE5}
 
 
 def test_build_is_deterministic_for_each_format(tmp_path: Path) -> None:

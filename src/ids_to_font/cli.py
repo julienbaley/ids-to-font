@@ -6,14 +6,14 @@ import argparse
 import sys
 from pathlib import Path
 
-from .builder import build, build_encoded
+from .builder import build, build_encoded, build_ligature
 from .input import read_characters, read_ids
 
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description=(
-            "Build a PUA IDS font or an encoded Unicode supplement "
+            "Build a PUA or required-ligature IDS font, or an encoded Unicode supplement "
             "from newline-delimited input."
         )
     )
@@ -24,7 +24,7 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--mode",
-        choices=("pua", "unicode"),
+        choices=("pua", "ligature", "unicode"),
         default="pua",
         help="Input and cmap mode (default: pua)",
     )
@@ -98,6 +98,24 @@ def main(argv: list[str] | None = None) -> int:
                 copyright_notice=args.copyright,
                 match_font=args.match_font,
                 latex_primary_font=args.latex_primary_font,
+                delay=args.delay,
+            )
+        elif args.mode == "ligature":
+            if args.previous_mapping is not None:
+                raise ValueError("--previous-mapping is only valid in PUA mode.")
+            if args.latex_primary_font is not None:
+                raise ValueError(
+                    "--latex-primary-font is only valid in Unicode mode."
+                )
+            result = build_ligature(
+                read_ids(args.input),
+                args.output_directory,
+                family_name=args.family_name or "IDS Glyphs",
+                basename=args.basename or "ids-glyphs",
+                output_format=args.output_format,
+                font_date=args.font_date,
+                copyright_notice=args.copyright,
+                match_font=args.match_font,
                 delay=args.delay,
             )
         else:

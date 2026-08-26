@@ -8,6 +8,7 @@ import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 
+from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.areaPen import AreaPen
 from fontTools.pens.boundsPen import BoundsPen
@@ -27,6 +28,10 @@ from .zi_tools import SvgResolution
 
 def empty_glyph():
     return TTGlyphPen(None).glyph()
+
+
+def unicode_glyph_name(codepoint: int) -> str:
+    return f"uni{codepoint:04X}" if codepoint <= 0xFFFF else f"u{codepoint:X}"
 
 
 def resolution_to_glyph(resolution: SvgResolution):
@@ -365,3 +370,116 @@ def build_font(
     builder.font.recalcTimestamp = False
     builder.font.flavor = "woff2" if output_format == "woff2" else None
     return builder.font, calibration
+
+
+def build_ligature_font(
+    resolutions: dict[str, SvgResolution],
+    family_name: str,
+    font_date: str,
+    copyright_notice: str,
+    output_format: str,
+    match_font: Path | None,
+):
+    try:
+        metadata_date = datetime.fromisoformat(f"{font_date}T00:00:00+00:00")
+    except ValueError as error:
+        raise ValueError("Font date must use YYYY-MM-DD format.") from error
+
+    expressions = sorted(resolutions)
+    output_names = {
+        expression: f"ids{index:05d}"
+        for index, expression in enumerate(expressions)
+    }
+    component_codepoints = sorted(
+        {ord(character) for expression in expressions for character in expression}
+    )
+    component_names = {
+        codepoint: unicode_glyph_name(codepoint)
+        for codepoint in component_codepoints
+    }
+    glyph_order = [
+        ".notdef",
+        *[component_names[codepoint] for codepoint in component_codepoints],
+        *[output_names[expression] for expression in expressions],
+    ]
+    glyphs = {".notdef": empty_glyph()}
+    glyphs.update(
+        {
+            component_names[codepoint]: empty_glyph()
+            for codepoint in component_codepoints
+        }
+    )
+    glyphs.update(
+        {
+            output_names[expression]: resolution_to_glyph(resolutions[expression])
+            for expression in expressions
+        }
+    )
+    calibration = calibrate_glyphs(glyphs, match_font)
+    metrics = {
+        ".notdef": (0, 0),
+        **{
+            component_names[codepoint]: (0, 0)
+            for codepoint in component_codepoints
+        },
+        **{
+            output_names[expression]: (1024, 24)
+            for expression in expressions
+        },
+    }
+
+    builder = FontBuilder(1024, isTTF=True)
+    builder.setupGlyphOrder(glyph_order)
+    builder.setupCharacterMap(
+        {codepoint: component_names[codepoint] for codepoint in component_codepoints}
+    )
+    builder.setupGlyf(glyphs)
+    builder.setupHorizontalMetrics(metrics)
+    builder.setupHorizontalHeader(
+        ascent=calibration["hhea_ascent"] if calibration else 1020,
+        descent=calibration["hhea_descent"] if calibration else -244,
+        lineGap=calibration["hhea_line_gap"] if calibration else 0,
+    )
+    builder.setupOS2(
+        sTypoAscender=calibration["typo_ascent"] if calibration else 1020,
+        sTypoDescender=calibration["typo_descent"] if calibration else -244,
+        sTypoLineGap=calibration["typo_line_gap"] if calibration else 0,
+        usWinAscent=calibration["win_ascent"] if calibration else 1020,
+        usWinDescent=calibration["win_descent"] if calibration else 244,
+    )
+    postscript_name = re.sub(r"[^A-Za-z0-9-]", "", family_name.replace(" ", ""))
+    builder.setupNameTable(
+        {
+            "familyName": family_name,
+            "styleName": "Regular",
+            "uniqueFontIdentifier": f"{family_name} {font_date}",
+            "fullName": family_name,
+            "psName": postscript_name or "IDSGlyphs",
+            "version": "Version 1.0",
+            "copyright": copyright_notice,
+            "licenseDescription": "GNU General Public License, version 3.",
+            "licenseInfoURL": "https://www.gnu.org/licenses/gpl-3.0.html",
+        }
+    )
+    builder.setupPost()
+    builder.setupMaxp()
+    feature_lines = [
+        "languagesystem DFLT dflt;",
+        "languagesystem hani dflt;",
+        "feature rlig {",
+        *[
+            "  sub "
+            + " ".join(component_names[ord(character)] for character in expression)
+            + f" by {output_names[expression]};"
+            for expression in sorted(expressions, key=lambda value: (-len(value), value))
+        ],
+        "} rlig;",
+        "",
+    ]
+    addOpenTypeFeaturesFromString(builder.font, "\n".join(feature_lines))
+    epoch = int(metadata_date.timestamp()) + 2082844800
+    builder.font["head"].created = epoch
+    builder.font["head"].modified = epoch
+    builder.font.recalcTimestamp = False
+    builder.font.flavor = "woff2" if output_format == "woff2" else None
+    return builder.font, calibration, output_names

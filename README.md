@@ -8,6 +8,11 @@ code point in the Unicode BMP Private Use Area. Unicode mode accepts existing
 characters, retrieves their outlines and decompositions from Zi.tools, and
 maps each glyph to its real Unicode code point.
 
+Ligature mode keeps IDS text literal and uses the OpenType `rlig` feature to
+replace supported sequences with their generated outlines. The font's
+component glyphs are zero-width placeholders, so this font must be used in an
+explicit IDS font run rather than as a global fallback.
+
 Generated TrueType outlines are marked as containing overlapping contours so
 stroke intersections retain the source SVG's filled appearance. Each
 separately filled SVG stroke is also normalized to the same contour direction
@@ -52,6 +57,26 @@ python3 -m venv .venv
 
 ```bash
 ids-to-font ids.txt --output-directory build
+```
+
+To build a literal-IDS required-ligature font:
+
+```bash
+ids-to-font ids.txt \
+  --mode ligature \
+  --output-directory build
+```
+
+The generated font maps each scalar occurring in the input to a zero-width
+placeholder and applies an `rlig` substitution for each complete IDS. No PUA
+code points or previous mapping are used; the document text remains the
+literal IDS sequence. For TTF output, the generated LaTeX package validates
+supported expressions and emits them unchanged:
+
+```tex
+\usepackage{ids-glyphs}
+
+Received text \ids{⿰鳥叴} continues here.
 ```
 
 This writes a content-addressed WOFF2 font and `ids-glyphs.json`:
