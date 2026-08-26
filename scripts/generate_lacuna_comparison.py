@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import math
 import statistics
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -14,6 +16,7 @@ from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.ttLib import TTFont
 
 from ids_to_font.lacuna import (
+    PROXY_PATH_COUNTS,
     extract_surviving_strokes,
     ids_definitions,
     lacuna_path,
@@ -22,14 +25,16 @@ from ids_to_font.lacuna import (
     normalize_same_axis,
     parse_ids,
     replace_lacuna,
-    retain_ordered_proxy_strokes,
     serialize_ids,
     svg_strokes,
 )
 from ids_to_font.zi_tools import SvgResolution, fetch_resolution
 
 
-OUTPUT = Path(__file__).with_name("lacuna-17-zitools-babelstone.svg")
+OUTPUT = Path(__file__).with_name(
+    "lacuna-17-zitools-babelstone-"
+    f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.svg"
+)
 CACHE = Path(__file__).with_name("lacuna-zitools-cache.json")
 FONT_PATH = Path(
     "/home/julien/projets/spelling/vendor/babelstone-han/BabelStoneHan.ttf"
@@ -94,6 +99,62 @@ def closest(samples, region):
             for index in range(4)
         ),
     )
+
+
+def aligned_proxy_strokes(samples, path):
+    retained_counts = [
+        len(sample[2]) - PROXY_PATH_COUNTS[sample[3]]
+        for sample in samples
+    ]
+    retained_count, agreement = Counter(retained_counts).most_common(1)[0]
+    if agreement > 1:
+        samples = [
+            sample
+            for sample, count in zip(samples, retained_counts)
+            if count == retained_count
+        ]
+    else:
+        retained_count = min(retained_counts)
+    if len(path) == 1:
+        return [
+            (
+                sample[0],
+                sample[1],
+                (
+                    sample[2][PROXY_PATH_COUNTS[sample[3]] :]
+                    if path[0] == 0
+                    else sample[2][: -PROXY_PATH_COUNTS[sample[3]]]
+                ),
+            )
+            for sample in samples
+        ]
+    offsets = range(retained_count + 1)
+    offset = min(
+        offsets,
+        key=lambda candidate: sum(
+            statistics.pvariance(
+                (
+                    sample[2][
+                        index
+                        if index < candidate
+                        else index + PROXY_PATH_COUNTS[sample[3]]
+                    ].bounds[dimension]
+                    for sample in samples
+                )
+            )
+            for index in range(retained_count)
+            for dimension in range(4)
+        ),
+    )
+    return [
+        (
+            sample[0],
+            sample[1],
+            sample[2][:offset]
+            + sample[2][offset + PROXY_PATH_COUNTS[sample[3]] :],
+        )
+        for sample in samples
+    ]
 
 
 def valid_region(region):
@@ -321,25 +382,19 @@ def main():
             )
             try:
                 strokes = svg_strokes(resolution)
-                surviving, region = extract_surviving_strokes(
+                _, region = extract_surviving_strokes(
                     strokes,
                     pattern,
                     path,
                 )
-                ordered = retain_ordered_proxy_strokes(
-                    strokes,
-                    path,
-                    proxy,
-                )
-                if ordered is not None:
-                    surviving = ordered
             except ValueError:
                 continue
             if not valid_region(region):
                 continue
-            samples.append((template, region, surviving))
+            samples.append((template, region, strokes, proxy))
         if not samples:
             raise ValueError("No Zi.tools examples.")
+        samples = aligned_proxy_strokes(samples, path)
         region = median_region(samples)
         sample = closest(samples, region)
         return sample[0], region, sample[2], len(samples)
