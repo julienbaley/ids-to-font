@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import Callable
 
 from .font import build_font, build_ligature_font
+from .lacuna import (
+    load_cjkvi_ids,
+    synthesize_from_reference,
+    synthesize_from_zi_tools,
+)
 from .zi_tools import (
     PROVIDER,
     EncodedResolution,
@@ -246,7 +251,40 @@ def build(
     active_ids = sorted(set(expressions))
     if not active_ids:
         raise ValueError("At least one IDS expression is required.")
-    resolutions = resolve_all(active_ids, resolver, delay, sleeper)
+    ids_data = None
+
+    def resolve(ids: str) -> SvgResolution:
+        nonlocal ids_data
+        try:
+            return resolver(ids)
+        except ValueError:
+            if "□" not in ids:
+                raise
+            if ids_data is None:
+                ids_data = load_cjkvi_ids()
+            if match_font is not None:
+                try:
+                    return synthesize_from_reference(
+                        ids,
+                        match_font,
+                        ids_data,
+                        fetch_encoded_resolution,
+                        resolver,
+                        delay=delay,
+                        sleeper=sleeper,
+                    )
+                except ValueError:
+                    pass
+            return synthesize_from_zi_tools(
+                ids,
+                ids_data,
+                fetch_encoded_resolution,
+                resolver,
+                delay=delay,
+                sleeper=sleeper,
+            )
+
+    resolutions = resolve_all(active_ids, resolve, delay, sleeper)
     font, calibration, output_names = build_ligature_font(
         resolutions,
         family_name,
@@ -285,6 +323,7 @@ def build(
             "glyphs": {
                 ids: {
                     "glyph": output_names[ids],
+                    **resolutions[ids].metadata,
                     **(
                         {"resolved_ids": resolutions[ids].resolved_ids}
                         if resolutions[ids].resolved_ids != ids

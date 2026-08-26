@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -21,6 +21,7 @@ class SvgResolution:
     resolved_ids: str
     view_box: str
     paths: tuple[dict[str, str], ...]
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
