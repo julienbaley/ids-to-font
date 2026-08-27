@@ -1,7 +1,7 @@
 # ids-to-font
 
-Build presentation-only WOFF2 or TTF fonts from Ideographic Description
-Sequences (IDS) or encoded Unicode characters.
+Build presentation-only WOFF2 and TTF fonts from Ideographic Description
+Sequences (IDS), or a selected format for encoded Unicode characters.
 
 The default IDS mode keeps text literal and uses the OpenType `rlig` feature
 to replace supported sequences with generated outlines. Unicode supplement
@@ -88,25 +88,11 @@ LaTeX package validates supported expressions and emits them unchanged:
 Received text \ids{⿰鳥叴} continues here.
 ```
 
-This writes a content-addressed WOFF2 font and `ids-glyphs.json`:
+By default, IDS mode writes two content-addressed fonts from one resolution
+pass, one shared manifest, and a generated LaTeX package paired with the TTF:
 
 ```text
 build/ids-glyphs-<sha256-prefix>.woff2
-build/ids-glyphs.json
-```
-
-Generate a TTF for desktop or LaTeX use instead:
-
-```bash
-ids-to-font ids.txt \
-  --output-format ttf \
-  --output-directory build
-```
-
-This also writes `ids-glyphs.sty`, a generated LaTeX package paired with the
-content-addressed TTF:
-
-```text
 build/ids-glyphs-<sha256-prefix>.ttf
 build/ids-glyphs.json
 build/ids-glyphs.sty
@@ -124,11 +110,14 @@ Received text \ids{⿰鳥叴} continues here.
 `\ids{...}` validates the expression, selects the generated font, and emits
 the literal IDS for OpenType shaping. For advanced formatting, `\idsfont` is
 the generated font switch and `\idschar{...}` is equivalent to `\ids{...}`.
+Under XeLaTeX, the command also preserves the original IDS for PDF copy/paste
+and prevents `xeCJK` character boundaries from interrupting ligature shaping.
 An unknown IDS expression produces a LaTeX error rather than disappearing as
 zero-width component glyphs.
 
-The default format is `woff2`; the `.sty` package is generated only for TTF
-output. Run the command once per desired format.
+Use `--output-format woff2` or `--output-format ttf` when only one IDS format
+is needed. A `.sty` package is generated whenever TTF output is requested.
+Unicode supplement mode continues to default to WOFF2.
 
 ## Unicode supplements
 
@@ -241,8 +230,8 @@ metadata produce the same font bytes.
 The JSON contains:
 
 - `mode`, either `ligature` or `unicode`;
-- `font`, the generated font filename;
-- `font_format`, either `woff2` or `ttf`;
+- `font` and `font_format` for a single-format build;
+- `fonts` and `font_formats` for a paired WOFF2 and TTF build;
 - `latex_package`, the generated `.sty` filename for TTF output;
 - `glyphs`, the active IDS output glyph names or encoded code points;
 - `decompositions` and `preferred_decomposition` for encoded glyphs;

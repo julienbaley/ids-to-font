@@ -3,9 +3,9 @@ import pytest
 from ids_to_font.cli import parser
 
 
-def test_output_format_defaults_to_woff2() -> None:
+def test_output_format_uses_mode_specific_default() -> None:
     args = parser().parse_args(["ids.txt", "--output-directory", "build"])
-    assert args.output_format == "woff2"
+    assert args.output_format is None
     assert args.mode == "ligature"
 
 
@@ -15,6 +15,13 @@ def test_output_format_accepts_ttf() -> None:
     )
     assert args.output_format == "ttf"
     assert args.match_font is None
+
+
+def test_output_format_accepts_both() -> None:
+    args = parser().parse_args(
+        ["ids.txt", "--output-directory", "build", "--output-format", "both"]
+    )
+    assert args.output_format == "both"
 
 
 def test_accepts_reference_font() -> None:

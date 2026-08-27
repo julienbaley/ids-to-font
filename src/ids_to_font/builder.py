@@ -25,10 +25,14 @@ from .zi_tools import (
 
 @dataclass(frozen=True)
 class BuildResult:
-    font_path: Path
+    font_paths: dict[str, Path]
     mapping_path: Path
     style_path: Path | None
     glyph_count: int
+
+    @property
+    def font_path(self) -> Path:
+        return self.font_paths.get("woff2") or self.font_paths["ttf"]
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -78,7 +82,22 @@ def write_latex_package(
           { #1 }
           { \msg_error:nnn { ids-to-font } { unknown-expression } { #1 } }
       }
-"""
+
+    \cs_new_protected:Npn \__ids_to_font_typeset_literal:n #1
+      {
+        \group_begin:
+        \sys_if_engine_xetex:T
+          {
+            \cs_if_exist:NT \tex_XeTeXgenerateactualtext:D
+              { \tex_XeTeXgenerateactualtext:D = 1 \scan_stop: }
+            \tl_map_inline:nn { #1 }
+              { \tex_XeTeXcharclass:D `##1 = 0 \scan_stop: }
+          }
+        __IDS_TO_FONT_COMMAND__
+        \__ids_to_font_literal:n { #1 }
+        \group_end:
+      }
+""".replace("__IDS_TO_FONT_COMMAND__", font_command)
         if literal_ids
         else r"""
     \cs_new_protected:Npn \__ids_to_font_character:n #1
@@ -113,12 +132,12 @@ def write_latex_package(
         else r"\prop_new:N \g__ids_to_font_character_prop"
     )
     ids_command = (
-        rf"{{ \group_begin: {font_command} \__ids_to_font_literal:n {{ #1 }} \group_end: }}"
+        r"{ \__ids_to_font_typeset_literal:n { #1 } }"
         if literal_ids
         else r"{ \__ids_to_font_lookup:n { #1 } }"
     )
     idschar_command = (
-        rf"\group_begin: {font_command} \__ids_to_font_literal:n {{ #1 }} \group_end:"
+        r"\__ids_to_font_typeset_literal:n { #1 }"
         if literal_ids
         else r"\__ids_to_font_character:n { #1 }"
     )
@@ -155,7 +174,11 @@ def write_latex_package(
 \RequirePackage{{fontspec}}
 
 \ExplSyntaxOn
-\newfontfamily{font_command}[Path=./]{{{font_path.name}}}
+\newfontfamily{font_command}[
+  Path=./,
+  Script=CJK,
+  Ligatures=Required
+]{{{font_path.name}}}
 \prop_if_exist:NF \g__ids_to_font_font_prop
   {{
 {character_props}
@@ -230,12 +253,54 @@ def save_font(
     return font_path
 
 
+def output_formats(output_format: str) -> tuple[str, ...]:
+    if output_format == "both":
+        return "woff2", "ttf"
+    if output_format in {"woff2", "ttf"}:
+        return (output_format,)
+    raise ValueError("Output format must be 'woff2', 'ttf', or 'both'.")
+
+
+def save_fonts(
+    font,
+    output_directory: Path,
+    basename: str,
+    formats: tuple[str, ...],
+) -> dict[str, Path]:
+    paths = {}
+    for output_format in formats:
+        font.flavor = "woff2" if output_format == "woff2" else None
+        paths[output_format] = save_font(
+            font,
+            output_directory,
+            basename,
+            output_format,
+        )
+    return paths
+
+
+def font_manifest(font_paths: dict[str, Path]) -> dict:
+    if len(font_paths) == 1:
+        output_format, font_path = next(iter(font_paths.items()))
+        return {
+            "font": font_path.name,
+            "font_format": output_format,
+        }
+    return {
+        "fonts": {
+            output_format: font_path.name
+            for output_format, font_path in font_paths.items()
+        },
+        "font_formats": list(font_paths),
+    }
+
+
 def build(
     expressions: list[str],
     output_directory: Path,
     family_name: str = "IDS Glyphs",
     basename: str = "ids-glyphs",
-    output_format: str = "woff2",
+    output_format: str = "both",
     font_date: str = "1970-01-01",
     copyright_notice: str = "KAGE-generated outlines preserved from Zi.tools.",
     match_font: Path | None = None,
@@ -248,8 +313,7 @@ def build(
 ) -> BuildResult:
     if delay < 0:
         raise ValueError("Request delay must not be negative.")
-    if output_format not in {"woff2", "ttf"}:
-        raise ValueError("Output format must be 'woff2' or 'ttf'.")
+    formats = output_formats(output_format)
     if lacuna_style not in {"dots", "dashes"}:
         raise ValueError("Lacuna style must be 'dots' or 'dashes'.")
     active_ids = sorted(set(expressions))
@@ -313,18 +377,18 @@ def build(
         family_name,
         font_date,
         copyright_notice,
-        output_format,
+        "ttf" if "ttf" in formats else "woff2",
         match_font,
     )
-    font_path = save_font(font, output_directory, basename, output_format)
+    font_paths = save_fonts(font, output_directory, basename, formats)
 
     style_path = None
-    if output_format == "ttf":
+    if "ttf" in formats:
         style_path = output_directory / f"{basename}.sty"
         write_latex_package(
             style_path,
             basename,
-            font_path,
+            font_paths["ttf"],
             font_date,
             {ids: 0 for ids in active_ids},
             literal_ids=True,
@@ -336,8 +400,7 @@ def build(
         {
             "schema_version": "1.0",
             "font_family": family_name,
-            "font": font_path.name,
-            "font_format": output_format,
+            **font_manifest(font_paths),
             "mode": "ligature",
             **({"latex_package": style_path.name} if style_path is not None else {}),
             "provider": PROVIDER,
@@ -358,7 +421,7 @@ def build(
         },
     )
     return BuildResult(
-        font_path=font_path,
+        font_paths=font_paths,
         mapping_path=mapping_path,
         style_path=style_path,
         glyph_count=len(active_ids),
@@ -489,7 +552,7 @@ def build_encoded(
         },
     )
     return BuildResult(
-        font_path=font_path,
+        font_paths={output_format: font_path},
         mapping_path=mapping_path,
         style_path=style_path,
         glyph_count=len(active_characters),

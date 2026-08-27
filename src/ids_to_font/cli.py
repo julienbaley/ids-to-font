@@ -38,9 +38,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--basename")
     result.add_argument(
         "--output-format",
-        choices=("woff2", "ttf"),
-        default="woff2",
-        help="Generated font format (default: woff2)",
+        choices=("woff2", "ttf", "both"),
+        help=(
+            "Generated font format; defaults to both in IDS mode and woff2 "
+            "in Unicode mode"
+        ),
     )
     result.add_argument(
         "--font-date",
@@ -99,6 +101,9 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    output_format = args.output_format or (
+        "woff2" if args.mode == "unicode" else "both"
+    )
     try:
         if args.mode == "unicode":
             if args.lacuna_style != "dots":
@@ -110,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output_directory,
                 family_name=args.family_name or "Unicode Supplement",
                 basename=args.basename or "unicode-supplement",
-                output_format=args.output_format,
+                output_format=output_format,
                 font_date=args.font_date,
                 copyright_notice=args.copyright,
                 match_font=args.match_font,
@@ -129,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output_directory,
                 family_name=args.family_name or "IDS Glyphs",
                 basename=args.basename or "ids-glyphs",
-                output_format=args.output_format,
+                output_format=output_format,
                 font_date=args.font_date,
                 copyright_notice=args.copyright,
                 match_font=args.match_font,
@@ -146,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         + ", ".join(
             str(path)
             for path in (
-                result.font_path,
+                *result.font_paths.values(),
                 result.mapping_path,
                 result.style_path,
             )

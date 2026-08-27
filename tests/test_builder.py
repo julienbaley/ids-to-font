@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -174,7 +176,7 @@ def write_light_reference_font(path: Path) -> None:
     builder.font.save(path)
 
 
-def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
+def test_builds_paired_fonts_and_mapping_by_default(tmp_path: Path) -> None:
     result = build(
         ["⿱弔口", "⿰鳥叴"],
         tmp_path,
@@ -182,9 +184,12 @@ def test_builds_paired_font_and_mapping(tmp_path: Path) -> None:
         resolver=resolution,
     )
     mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
-    assert mapping["font"] == result.font_path.name
-    assert mapping["font_format"] == "woff2"
-    assert result.style_path is None
+    assert mapping["fonts"] == {
+        output_format: path.name
+        for output_format, path in result.font_paths.items()
+    }
+    assert mapping["font_formats"] == ["woff2", "ttf"]
+    assert result.style_path == tmp_path / "ids-glyphs.sty"
     assert set(mapping["glyphs"]) == {"⿰鳥叴", "⿱弔口"}
     assert mapping["mode"] == "ligature"
     assert "assignments" not in mapping
@@ -287,6 +292,45 @@ def test_builds_ttf_with_the_same_cmap(tmp_path: Path) -> None:
     assert mapping["latex_package"] == "ids-glyphs.sty"
 
 
+def test_builds_both_formats_with_one_manifest_and_package(tmp_path: Path) -> None:
+    result = build(
+        ["⿰鳥叴", "⿱弔口"],
+        tmp_path,
+        output_format="both",
+        delay=0,
+        resolver=resolution,
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+
+    assert set(result.font_paths) == {"woff2", "ttf"}
+    assert mapping["fonts"] == {
+        output_format: path.name
+        for output_format, path in result.font_paths.items()
+    }
+    assert mapping["font_formats"] == ["woff2", "ttf"]
+    assert "font" not in mapping
+    assert "font_format" not in mapping
+    assert mapping["latex_package"] == "ids-glyphs.sty"
+    assert result.style_path == tmp_path / "ids-glyphs.sty"
+    assert result.font_paths["ttf"].name in result.style_path.read_text(
+        encoding="utf-8"
+    )
+    assert "Ligatures=Required" in result.style_path.read_text(encoding="utf-8")
+    assert "Script=CJK" in result.style_path.read_text(encoding="utf-8")
+    assert r"\tex_XeTeXgenerateactualtext:D = 1" in result.style_path.read_text(
+        encoding="utf-8"
+    )
+    assert r"\tex_XeTeXcharclass:D `##1 = 0" in result.style_path.read_text(
+        encoding="utf-8"
+    )
+    with (
+        TTFont(result.font_paths["woff2"]) as woff2,
+        TTFont(result.font_paths["ttf"]) as ttf,
+    ):
+        assert woff2.getBestCmap() == ttf.getBestCmap()
+        assert woff2.getGlyphOrder() == ttf.getGlyphOrder()
+
+
 def test_ttf_package_validates_and_emits_literal_ids(
     tmp_path: Path,
 ) -> None:
@@ -304,6 +348,72 @@ def test_ttf_package_validates_and_emits_literal_ids(
     assert r"\char_generate:nn" not in style
     assert r"\NewDocumentCommand \ids { m }" in style
     assert r"\NewDocumentCommand \idschar { m }" in style
+    assert r"\__ids_to_font_typeset_literal:n { #1 }" in style
+
+
+def test_xelatex_package_preserves_literal_ids_with_xecjk(
+    tmp_path: Path,
+) -> None:
+    xelatex = shutil.which("xelatex")
+    pdftotext = shutil.which("pdftotext")
+    kpsewhich = shutil.which("kpsewhich")
+    if xelatex is None or pdftotext is None or kpsewhich is None:
+        pytest.skip("XeLaTeX integration tools are unavailable.")
+    xecjk = subprocess.run(
+        [kpsewhich, "xeCJK.sty"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if not xecjk:
+        pytest.skip("xeCJK is unavailable.")
+
+    result = build(
+        ["⿰鳥叴", "⿰□區"],
+        tmp_path,
+        output_format="ttf",
+        delay=0,
+        resolver=resolution,
+    )
+    font_name = result.font_paths["ttf"].name
+    (tmp_path / "specimen.tex").write_text(
+        rf"""\documentclass{{article}}
+\usepackage{{xeCJK}}
+\setCJKmainfont[Path=./]{{{font_name}}}
+\usepackage{{ids-glyphs}}
+\pagestyle{{empty}}
+\begin{{document}}
+START-A:\ids{{⿰鳥叴}}:END-A
+
+START-B:\ids{{⿰□區}}:END-B
+\end{{document}}
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [
+            xelatex,
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "specimen.tex",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    extracted = subprocess.run(
+        [pdftotext, "specimen.pdf", "-"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout
+
+    assert "START-A:⿰鳥叴:END-A" in extracted
+    assert "START-B:⿰□區:END-B" in extracted
 
 
 def test_builds_encoded_unicode_supplement_and_alias_package(
