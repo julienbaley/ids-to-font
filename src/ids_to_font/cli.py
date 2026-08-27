@@ -73,7 +73,20 @@ def parser() -> argparse.ArgumentParser:
         "--delay",
         type=float,
         default=10,
-        help="Seconds between Zi.tools requests (default: 10)",
+        help="Seconds between uncached Zi.tools requests (default: 10)",
+    )
+    result.add_argument(
+        "--cache-directory",
+        type=Path,
+        help=(
+            "Zi.tools cache directory (default: "
+            "$XDG_CACHE_HOME/ids-to-font/zi-tools)"
+        ),
+    )
+    result.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Bypass and replace existing Zi.tools cache entries",
     )
     return result
 
@@ -93,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
                 match_font=args.match_font,
                 latex_primary_font=args.latex_primary_font,
                 delay=args.delay,
+                cache_directory=args.cache_directory,
+                refresh_cache=args.refresh_cache,
             )
         else:
             if args.latex_primary_font is not None:
@@ -109,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
                 copyright_notice=args.copyright,
                 match_font=args.match_font,
                 delay=args.delay,
+                cache_directory=args.cache_directory,
+                refresh_cache=args.refresh_cache,
             )
     except (OSError, ValueError) as error:
         print(f"ids-to-font: {error}", file=sys.stderr)

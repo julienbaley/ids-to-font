@@ -19,8 +19,7 @@ from .zi_tools import (
     PROVIDER,
     EncodedResolution,
     SvgResolution,
-    fetch_encoded_resolution,
-    fetch_resolution,
+    ZiToolsClient,
 )
 
 
@@ -241,8 +240,10 @@ def build(
     copyright_notice: str = "KAGE-generated outlines preserved from Zi.tools.",
     match_font: Path | None = None,
     delay: float = 10,
-    resolver: Callable[[str], SvgResolution] = fetch_resolution,
+    resolver: Callable[[str], SvgResolution] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    cache_directory: Path | None = None,
+    refresh_cache: bool = False,
 ) -> BuildResult:
     if delay < 0:
         raise ValueError("Request delay must not be negative.")
@@ -252,6 +253,14 @@ def build(
     if not active_ids:
         raise ValueError("At least one IDS expression is required.")
     ids_data = None
+    resolver_owns_delay = resolver is None
+    if resolver is None:
+        resolver = ZiToolsClient(
+            cache_directory=cache_directory,
+            refresh_cache=refresh_cache,
+            delay=delay,
+            sleeper=sleeper,
+        ).fetch_resolution
 
     def resolve(ids: str) -> SvgResolution:
         nonlocal ids_data
@@ -277,7 +286,7 @@ def build(
                     ids,
                     ids_data,
                     resolver,
-                    delay=delay,
+                    delay=0 if resolver_owns_delay else delay,
                     sleeper=sleeper,
                 )
             except ValueError as error:
@@ -288,7 +297,12 @@ def build(
                     ) from error
                 raise
 
-    resolutions = resolve_all(active_ids, resolve, delay, sleeper)
+    resolutions = resolve_all(
+        active_ids,
+        resolve,
+        0 if resolver_owns_delay else delay,
+        sleeper,
+    )
     font, calibration, output_names = build_ligature_font(
         resolutions,
         family_name,
@@ -357,8 +371,10 @@ def build_encoded(
     match_font: Path | None = None,
     latex_primary_font: Path | None = None,
     delay: float = 10,
-    resolver: Callable[[str], EncodedResolution] = fetch_encoded_resolution,
+    resolver: Callable[[str], EncodedResolution] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    cache_directory: Path | None = None,
+    refresh_cache: bool = False,
 ) -> BuildResult:
     if delay < 0:
         raise ValueError("Request delay must not be negative.")
@@ -372,7 +388,20 @@ def build_encoded(
     active_characters = sorted(set(characters), key=ord)
     if not active_characters:
         raise ValueError("At least one Unicode character is required.")
-    resolutions = resolve_all(active_characters, resolver, delay, sleeper)
+    resolver_owns_delay = resolver is None
+    if resolver is None:
+        resolver = ZiToolsClient(
+            cache_directory=cache_directory,
+            refresh_cache=refresh_cache,
+            delay=delay,
+            sleeper=sleeper,
+        ).fetch_encoded_resolution
+    resolutions = resolve_all(
+        active_characters,
+        resolver,
+        0 if resolver_owns_delay else delay,
+        sleeper,
+    )
     assignments = {
         character: ord(character)
         for character in active_characters

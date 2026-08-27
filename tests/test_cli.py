@@ -30,6 +30,21 @@ def test_accepts_reference_font() -> None:
     assert str(args.match_font) == "reference.ttf"
 
 
+def test_accepts_cache_controls() -> None:
+    args = parser().parse_args(
+        [
+            "ids.txt",
+            "--output-directory",
+            "build",
+            "--cache-directory",
+            "cache",
+            "--refresh-cache",
+        ]
+    )
+    assert str(args.cache_directory) == "cache"
+    assert args.refresh_cache is True
+
+
 def test_accepts_unicode_mode_and_latex_primary_font() -> None:
     args = parser().parse_args(
         [

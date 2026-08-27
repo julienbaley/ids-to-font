@@ -328,6 +328,132 @@ def font_contours(font: TTFont, character: str) -> list[ReferenceContour]:
     return contours
 
 
+def region_for_path(
+    node: IdsNode,
+    path: tuple[int, ...],
+    region: tuple[float, float, float, float] = (0, 0, 95, 95),
+) -> tuple[float, float, float, float]:
+    if not path:
+        return region
+    if node.value not in {"⿰", "⿱", "⿲", "⿳"}:
+        raise ValueError(f"Cannot allocate a structural region under {node.value}.")
+    index = path[0]
+    count = len(node.children)
+    left, top, right, bottom = region
+    if node.value in {"⿰", "⿲"}:
+        width = (right - left) / count
+        child_region = (
+            left + index * width,
+            top,
+            left + (index + 1) * width,
+            bottom,
+        )
+    else:
+        height = (bottom - top) / count
+        child_region = (
+            left,
+            top + index * height,
+            right,
+            top + (index + 1) * height,
+        )
+    return region_for_path(node.children[index], path[1:], child_region)
+
+
+def transform_reference_contours(
+    contours: list[ReferenceContour],
+    region: tuple[float, float, float, float],
+) -> list[ReferenceContour]:
+    left, top, right, bottom = region
+    x_scale = (right - left) / 95
+    y_scale = (bottom - top) / 95
+    transformed = []
+    for contour in contours:
+        path_pen = SVGPathPen(None)
+        parse_path(
+            contour.path,
+            TransformPen(
+                path_pen,
+                (x_scale, 0, 0, y_scale, left, top),
+            ),
+        )
+        contour_left, contour_top, contour_right, contour_bottom = contour.bounds
+        transformed.append(
+            ReferenceContour(
+                path_pen.getCommands(),
+                (
+                    contour_left * x_scale + left,
+                    contour_top * y_scale + top,
+                    contour_right * x_scale + left,
+                    contour_bottom * y_scale + top,
+                ),
+            )
+        )
+    return transformed
+
+
+def synthesize_structural_reference(
+    ids: str,
+    pattern: IdsNode,
+    normalized: IdsNode,
+    reference_font: Path,
+    font: TTFont,
+) -> SvgResolution:
+    path = lacuna_path(pattern)
+    if (
+        len(path) != 1
+        or pattern.value not in {"⿰", "⿱"}
+        or len(pattern.children) != 2
+    ):
+        raise ValueError(
+            f"{reference_font.name} supplied no usable examples for {ids}."
+        )
+    lacuna_index = path[0]
+    known = pattern.children[1 - lacuna_index]
+    if known.children or known.value == LACUNA:
+        raise ValueError(
+            f"{reference_font.name} supplied no usable examples for {ids}."
+        )
+    normalized_lacuna = region_for_path(normalized, lacuna_path(normalized))
+    left, top, right, bottom = normalized_lacuna
+    if pattern.value == "⿱":
+        known_region = (
+            0,
+            bottom if lacuna_index == 0 else 0,
+            95,
+            95 if lacuna_index == 0 else top,
+        )
+    else:
+        known_region = (
+            right if lacuna_index == 0 else 0,
+            0,
+            95 if lacuna_index == 0 else left,
+            95,
+        )
+    contours = transform_reference_contours(
+        font_contours(font, known.value),
+        known_region,
+    )
+    return SvgResolution(
+        requested_ids=ids,
+        resolved_ids=ids,
+        view_box="0 0 95 95",
+        paths=(
+            {"d": " ".join(contour.path for contour in contours)},
+            {"d": dotted_path(normalized_lacuna)},
+        ),
+        metadata={
+            "synthetic_lacuna": True,
+            "structural_fallback": True,
+            "layout_provider": "IDS structure",
+            "layout_example": serialize_ids(normalized),
+            "layout_sample_size": 0,
+            "outline_provider": reference_font.name,
+            "outline_example": known.value,
+            "ids_index": CJKVI_IDS_URL,
+        },
+    )
+
+
 def retain_enclosed_contours(
     contours: list[ReferenceContour],
     retained: list[ReferenceContour],
@@ -913,7 +1039,8 @@ def synthesize_from_reference(
     ids_data: str,
     sample_size: int = 8,
 ) -> SvgResolution:
-    pattern = normalize_same_axis(parse_ids(ids), ids_definitions(ids_data))
+    original_pattern = parse_ids(ids)
+    pattern = normalize_same_axis(original_pattern, ids_definitions(ids_data))
     path = lacuna_path(pattern)
     with TTFont(reference_font) as font:
         cmap = font.getBestCmap()
@@ -935,6 +1062,14 @@ def synthesize_from_reference(
                 surviving,
             )
             samples.append((character, surviving, region))
+        if not samples:
+            return synthesize_structural_reference(
+                ids,
+                original_pattern,
+                pattern,
+                reference_font,
+                font,
+            )
     return synthesize_from_samples(
         ids,
         samples,

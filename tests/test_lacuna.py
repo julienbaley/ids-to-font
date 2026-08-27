@@ -60,7 +60,7 @@ def reverse_rectangle(
 
 
 def write_reference_font(path: Path) -> None:
-    glyph_order = [".notdef", "sample1", "sample2", "sample3", "han"]
+    glyph_order = [".notdef", "sample1", "sample2", "sample3", "han", "zi"]
     glyphs = {".notdef": TTGlyphPen(None).glyph()}
     for index, name in enumerate(glyph_order[1:4]):
         pen = TTGlyphPen(None)
@@ -71,6 +71,10 @@ def write_reference_font(path: Path) -> None:
     han_pen = TTGlyphPen(None)
     rectangle(han_pen, 50, -100, 950, 900)
     glyphs["han"] = han_pen.glyph()
+    zi_pen = TTGlyphPen(None)
+    rectangle(zi_pen, 100, 100, 900, 850)
+    reverse_rectangle(zi_pen, 300, 300, 700, 650)
+    glyphs["zi"] = zi_pen.glyph()
     builder = FontBuilder(1000, isTTF=True)
     builder.setupGlyphOrder(glyph_order)
     builder.setupCharacterMap(
@@ -79,6 +83,7 @@ def write_reference_font(path: Path) -> None:
             0xE101: "sample2",
             0xE102: "sample3",
             0x4E00: "han",
+            0x753E: "zi",
         }
     )
     builder.setupGlyf(glyphs)
@@ -146,6 +151,7 @@ def test_synthesizes_dotted_lacuna_from_reference_examples(
     with TTFont(reference) as font:
         assert set(font.getBestCmap()) == {
             0x4E00,
+            0x753E,
             0xE100,
             0xE101,
             0xE102,
@@ -181,6 +187,48 @@ def test_match_font_succeeds_without_zi_tools_kage(
 
     assert calls == ["⿰□古"]
     assert mapping["glyphs"]["⿰□古"]["outline_provider"] == "reference.ttf"
+
+
+def test_structural_reference_fallback_builds_unattested_three_stack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+    calls = []
+
+    def no_kage_resolver(ids: str):
+        calls.append(ids)
+        raise ValueError("Zi.tools returned no KAGE stroke program.")
+
+    monkeypatch.setattr(builder_module, "load_cjkvi_ids", lambda: IDS_DATA)
+    first = builder_module.build(
+        ["⿱甾□"],
+        tmp_path / "first",
+        output_format="ttf",
+        match_font=reference,
+        resolver=no_kage_resolver,
+        delay=0,
+    )
+    second = builder_module.build(
+        ["⿱甾□"],
+        tmp_path / "second",
+        output_format="ttf",
+        match_font=reference,
+        resolver=no_kage_resolver,
+        delay=0,
+    )
+    mapping = json.loads(first.mapping_path.read_text(encoding="utf-8"))
+    glyph = mapping["glyphs"]["⿱甾□"]
+
+    assert calls == ["⿱甾□", "⿱甾□"]
+    assert first.font_path.name == second.font_path.name
+    assert first.font_path.read_bytes() == second.font_path.read_bytes()
+    assert glyph["structural_fallback"] is True
+    assert glyph["layout_provider"] == "IDS structure"
+    assert glyph["layout_example"] == "⿳巛田□"
+    assert glyph["outline_provider"] == "reference.ttf"
+    assert glyph["outline_example"] == "甾"
 
 
 def generated_proxy_resolution(ids: str) -> SvgResolution:

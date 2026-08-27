@@ -16,7 +16,9 @@ uses matching glyphs from `--match-font` for both component allocation and
 surviving readable contours. Without a reference font, generated Zi.tools
 proxies supply both layout and outlines; their KAGE stroke programs identify
 the missing component structurally. A dotted polygonal box is added in the
-damaged region.
+damaged region. If no complete matching reference glyph exists, a readable
+top-level component available in the reference font can be placed directly
+from the normalized IDS structure.
 
 Generated TrueType outlines are marked as containing overlapping contours so
 stroke intersections retain the source SVG's filled appearance. Each
@@ -193,10 +195,22 @@ output mapping.
 Matching is optical rather than stylistic: outlines from different type
 designs will retain their individual stroke shapes.
 
-Zi.tools requests are made sequentially with a configurable delay:
+Successful Zi.tools JSON responses are cached by exact lookup value under
+`$XDG_CACHE_HOME/ids-to-font/zi-tools/`, or
+`~/.cache/ids-to-font/zi-tools/` when `XDG_CACHE_HOME` is unset. The delay
+applies only between actual network requests, not cache hits:
 
 ```bash
 ids-to-font ids.txt --delay 10 --output-directory build
+```
+
+Use a build-specific cache location or explicitly refresh existing entries:
+
+```bash
+ids-to-font ids.txt \
+  --cache-directory build/zi-tools-cache \
+  --refresh-cache \
+  --output-directory build
 ```
 
 Font metadata that affects byte-for-byte output is explicit:
