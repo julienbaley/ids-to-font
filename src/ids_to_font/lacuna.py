@@ -480,6 +480,51 @@ def retain_enclosed_contours(
     ]
 
 
+def recover_known_component_contours(
+    font: TTFont,
+    contours: list[ReferenceContour],
+    retained: list[ReferenceContour],
+    pattern: IdsNode,
+    path: tuple[int, ...],
+) -> list[ReferenceContour]:
+    if (
+        len(path) != 1
+        or pattern.value not in {"⿰", "⿱"}
+        or len(pattern.children) != 2
+    ):
+        return retained
+    known_index = 1 - path[0]
+    known = pattern.children[known_index]
+    if known.children or known.value == LACUNA:
+        return retained
+    if ord(known.value) not in font.getBestCmap():
+        return retained
+    expected_count = len(font_contours(font, known.value))
+    if len(retained) >= expected_count:
+        return retained
+    retained_ids = {id(contour) for contour in retained}
+    candidates = [
+        contour
+        for contour in contours
+        if id(contour) not in retained_ids
+    ]
+    axis = 0 if pattern.value == "⿰" else 1
+    reverse = known_index == 1
+    candidates.sort(
+        key=lambda contour: contour.center[axis],
+        reverse=reverse,
+    )
+    retained_ids.update(
+        id(contour)
+        for contour in candidates[: expected_count - len(retained)]
+    )
+    return [
+        contour
+        for contour in contours
+        if id(contour) in retained_ids
+    ]
+
+
 def svg_strokes(
     resolution: EncodedResolution | SvgResolution,
 ) -> list[SvgStroke]:
@@ -1110,6 +1155,13 @@ def synthesize_from_reference(
             surviving = retain_enclosed_contours(
                 contours,
                 surviving,
+            )
+            surviving = recover_known_component_contours(
+                font,
+                contours,
+                surviving,
+                pattern,
+                path,
             )
             samples.append((character, surviving, region))
         if not samples:

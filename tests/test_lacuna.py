@@ -29,6 +29,9 @@ U+753E\t甾\t⿱巛田
 U+E100\t\uE100\t⿰亻古
 U+E101\t\uE101\t⿰木古
 U+E102\t\uE102\t⿰石古
+U+E110\t\uE110\t⿰土分
+U+E111\t\uE111\t⿰口分
+U+E112\t\uE112\t⿰女分
 """
 
 
@@ -61,13 +64,31 @@ def reverse_rectangle(
 
 
 def write_reference_font(path: Path) -> None:
-    glyph_order = [".notdef", "sample1", "sample2", "sample3", "han", "zi"]
+    glyph_order = [
+        ".notdef",
+        "sample1",
+        "sample2",
+        "sample3",
+        "fen_sample1",
+        "fen_sample2",
+        "fen_sample3",
+        "han",
+        "zi",
+        "fen",
+    ]
     glyphs = {".notdef": TTGlyphPen(None).glyph()}
     for index, name in enumerate(glyph_order[1:4]):
         pen = TTGlyphPen(None)
         rectangle(pen, 60 + index * 10, 100, 350 + index * 10, 900)
         rectangle(pen, 450 + index * 5, 100, 940, 900)
         reverse_rectangle(pen, 600, 300, 800, 700)
+        glyphs[name] = pen.glyph()
+    for index, name in enumerate(glyph_order[4:7]):
+        pen = TTGlyphPen(None)
+        rectangle(pen, 50 + index * 5, 100, 350 + index * 5, 900)
+        rectangle(pen, 300, 550, 560, 900)
+        rectangle(pen, 650, 550, 900, 900)
+        rectangle(pen, 250, 100, 800, 520)
         glyphs[name] = pen.glyph()
     han_pen = TTGlyphPen(None)
     rectangle(han_pen, 50, -100, 950, 900)
@@ -76,6 +97,11 @@ def write_reference_font(path: Path) -> None:
     rectangle(zi_pen, 100, 100, 900, 850)
     reverse_rectangle(zi_pen, 300, 300, 700, 650)
     glyphs["zi"] = zi_pen.glyph()
+    fen_pen = TTGlyphPen(None)
+    rectangle(fen_pen, 50, 550, 400, 900)
+    rectangle(fen_pen, 600, 550, 950, 900)
+    rectangle(fen_pen, 200, 100, 800, 520)
+    glyphs["fen"] = fen_pen.glyph()
     builder = FontBuilder(1000, isTTF=True)
     builder.setupGlyphOrder(glyph_order)
     builder.setupCharacterMap(
@@ -83,7 +109,11 @@ def write_reference_font(path: Path) -> None:
             0xE100: "sample1",
             0xE101: "sample2",
             0xE102: "sample3",
+            0xE110: "fen_sample1",
+            0xE111: "fen_sample2",
+            0xE112: "fen_sample3",
             0x4E00: "han",
+            0x5206: "fen",
             0x753E: "zi",
         }
     )
@@ -153,11 +183,33 @@ def test_synthesizes_dotted_lacuna_from_reference_examples(
     with TTFont(reference) as font:
         assert set(font.getBestCmap()) == {
             0x4E00,
+            0x5206,
             0x753E,
             0xE100,
             0xE101,
             0xE102,
+            0xE110,
+            0xE111,
+            0xE112,
         }
+
+
+def test_retains_boundary_crossing_stroke_of_known_component(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+
+    resolution = synthesize_from_reference(
+        "⿰□分",
+        reference,
+        IDS_DATA,
+        lacuna_style="dashes",
+    )
+
+    assert resolution.metadata["outline_provider"] == "reference.ttf"
+    assert resolution.metadata["lacuna_style"] == "dashes"
+    assert resolution.paths[0]["d"].count("M") == 3
 
 
 def test_match_font_succeeds_without_zi_tools_kage(
