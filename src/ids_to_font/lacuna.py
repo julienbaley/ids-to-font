@@ -15,6 +15,7 @@ from urllib.request import urlopen
 
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.recordingPen import RecordingPen
+from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.svgLib.path import parse_path
 from fontTools.ttLib import TTFont
@@ -62,6 +63,17 @@ class IdsNode:
 @dataclass(frozen=True)
 class SvgStroke:
     path: dict[str, str] | None
+    bounds: tuple[float, float, float, float]
+
+    @property
+    def center(self) -> tuple[float, float]:
+        left, top, right, bottom = self.bounds
+        return (left + right) / 2, (top + bottom) / 2
+
+
+@dataclass(frozen=True)
+class ReferenceContour:
+    path: str
     bounds: tuple[float, float, float, float]
 
     @property
@@ -262,7 +274,7 @@ def normalization_transform(
     return scale, x_offset, y_offset
 
 
-def font_strokes(font: TTFont, character: str) -> list[SvgStroke]:
+def font_contours(font: TTFont, character: str) -> list[ReferenceContour]:
     glyph_name = font.getBestCmap().get(ord(character))
     if glyph_name is None:
         raise ValueError(f"Reference font does not contain {character}.")
@@ -276,34 +288,67 @@ def font_strokes(font: TTFont, character: str) -> list[SvgStroke]:
         if record[0] in {"closePath", "endPath"}:
             contour_records.append(current)
             current = []
-    raw_bounds = []
+    raw_contours = []
     for records in contour_records:
         contour = RecordingPen()
         contour.value = records
         bounds_pen = BoundsPen(glyph_set)
         contour.replay(bounds_pen)
         if bounds_pen.bounds is not None:
-            raw_bounds.append(bounds_pen.bounds)
-    if not raw_bounds:
+            raw_contours.append((contour, bounds_pen.bounds))
+    if not raw_contours:
         raise ValueError(f"Reference font glyph {character} has no outline.")
     full_bounds = (
-        min(bounds[0] for bounds in raw_bounds),
-        -max(bounds[3] for bounds in raw_bounds),
-        max(bounds[2] for bounds in raw_bounds),
-        -min(bounds[1] for bounds in raw_bounds),
+        min(bounds[0] for _, bounds in raw_contours),
+        -max(bounds[3] for _, bounds in raw_contours),
+        max(bounds[2] for _, bounds in raw_contours),
+        -min(bounds[1] for _, bounds in raw_contours),
     )
     scale, x_offset, y_offset = normalization_transform(full_bounds)
-    return [
-        SvgStroke(
-            None,
-            (
-                left * scale + x_offset,
-                -top * scale + y_offset,
-                right * scale + x_offset,
-                -bottom * scale + y_offset,
-            ),
+    contours = []
+    for contour, (left, bottom, right, top) in raw_contours:
+        path_pen = SVGPathPen(glyph_set)
+        contour.replay(
+            TransformPen(
+                path_pen,
+                (scale, 0, 0, -scale, x_offset, y_offset),
+            )
         )
-        for left, bottom, right, top in raw_bounds
+        contours.append(
+            ReferenceContour(
+                path_pen.getCommands(),
+                (
+                    left * scale + x_offset,
+                    -top * scale + y_offset,
+                    right * scale + x_offset,
+                    -bottom * scale + y_offset,
+                ),
+            )
+        )
+    return contours
+
+
+def retain_enclosed_contours(
+    contours: list[ReferenceContour],
+    retained: list[ReferenceContour],
+) -> list[ReferenceContour]:
+    retained_ids = {id(contour) for contour in retained}
+    for contour in contours:
+        if id(contour) in retained_ids:
+            continue
+        left, top, right, bottom = contour.bounds
+        if any(
+            parent.bounds[0] <= left
+            and parent.bounds[1] <= top
+            and parent.bounds[2] >= right
+            and parent.bounds[3] >= bottom
+            for parent in retained
+        ):
+            retained_ids.add(id(contour))
+    return [
+        contour
+        for contour in contours
+        if id(contour) in retained_ids
     ]
 
 
@@ -794,11 +839,22 @@ def synthesize_from_samples(
         ),
     )
     character, surviving, _ = outline_example
-    output_paths = tuple(
-        stroke.path
-        for stroke in surviving
-        if stroke.path is not None
-    ) + ({"d": dotted_path(median_region)},)
+    if surviving and isinstance(surviving[0], ReferenceContour):
+        output_paths = (
+            {
+                "d": " ".join(
+                    contour.path
+                    for contour in surviving
+                )
+            },
+            {"d": dotted_path(median_region)},
+        )
+    else:
+        output_paths = tuple(
+            stroke.path
+            for stroke in surviving
+            if stroke.path is not None
+        ) + ({"d": dotted_path(median_region)},)
     return SvgResolution(
         requested_ids=ids,
         resolved_ids=ids,
@@ -855,11 +911,7 @@ def synthesize_from_reference(
     ids: str,
     reference_font: Path,
     ids_data: str,
-    ids_resolver: Callable[[str], SvgResolution],
     sample_size: int = 8,
-    max_attempts: int = 24,
-    delay: float = 10,
-    sleeper: Callable[[float], None] = time.sleep,
 ) -> SvgResolution:
     pattern = normalize_same_axis(parse_ids(ids), ids_definitions(ids_data))
     path = lacuna_path(pattern)
@@ -872,28 +924,22 @@ def synthesize_from_reference(
         ][:sample_size]
         samples = []
         for character in candidates:
+            contours = font_contours(font, character)
             surviving, region = extract_surviving_strokes(
-                font_strokes(font, character),
+                contours,
                 pattern,
                 path,
             )
+            surviving = retain_enclosed_contours(
+                contours,
+                surviving,
+            )
             samples.append((character, surviving, region))
-    outline_samples = collect_zi_tools_samples(
-        pattern,
-        path,
-        ids_resolver,
-        sample_size,
-        max_attempts,
-        delay,
-        sleeper,
-    )
     return synthesize_from_samples(
         ids,
         samples,
         reference_font.name,
         CJKVI_IDS_URL,
-        outline_samples,
-        "Zi.tools",
     )
 
 

@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 
+from ids_to_font import builder as builder_module
 from ids_to_font.lacuna import (
     PROXY_STROKE_COUNTS,
     align_proxy_resolutions,
@@ -43,14 +45,32 @@ def rectangle(
     pen.closePath()
 
 
+def reverse_rectangle(
+    pen: TTGlyphPen,
+    left: int,
+    bottom: int,
+    right: int,
+    top: int,
+) -> None:
+    pen.moveTo((left, bottom))
+    pen.lineTo((left, top))
+    pen.lineTo((right, top))
+    pen.lineTo((right, bottom))
+    pen.closePath()
+
+
 def write_reference_font(path: Path) -> None:
-    glyph_order = [".notdef", "sample1", "sample2", "sample3"]
+    glyph_order = [".notdef", "sample1", "sample2", "sample3", "han"]
     glyphs = {".notdef": TTGlyphPen(None).glyph()}
-    for index, name in enumerate(glyph_order[1:]):
+    for index, name in enumerate(glyph_order[1:4]):
         pen = TTGlyphPen(None)
         rectangle(pen, 60 + index * 10, 100, 350 + index * 10, 900)
         rectangle(pen, 450 + index * 5, 100, 940, 900)
+        reverse_rectangle(pen, 600, 300, 800, 700)
         glyphs[name] = pen.glyph()
+    han_pen = TTGlyphPen(None)
+    rectangle(han_pen, 50, -100, 950, 900)
+    glyphs["han"] = han_pen.glyph()
     builder = FontBuilder(1000, isTTF=True)
     builder.setupGlyphOrder(glyph_order)
     builder.setupCharacterMap(
@@ -58,6 +78,7 @@ def write_reference_font(path: Path) -> None:
             0xE100: "sample1",
             0xE101: "sample2",
             0xE102: "sample3",
+            0x4E00: "han",
         }
     )
     builder.setupGlyf(glyphs)
@@ -105,26 +126,61 @@ def test_synthesizes_dotted_lacuna_from_reference_examples(
         "⿰□古",
         reference,
         IDS_DATA,
-        generated_proxy_resolution,
-        delay=0,
     )
     assert resolution.metadata == {
         "synthetic_lacuna": True,
         "layout_provider": "reference.ttf",
         "layout_example": "\uE101",
         "layout_sample_size": 3,
-        "outline_provider": "Zi.tools",
-        "outline_example": "⿰巛古",
+        "outline_provider": "reference.ttf",
+        "outline_example": "\uE101",
         "ids_index": (
             "https://raw.githubusercontent.com/cjkvi/cjkvi-ids/"
             "86b4d16159f0079437870408f0ca186e529015db/ids.txt"
         ),
     }
     assert len(resolution.paths) == 2
-    assert resolution.paths[0]["d"] == "M 100,10H190V190H100Z"
+    assert resolution.paths[0]["d"].count("M") == 2
+    assert "transform" not in resolution.paths[0]
     assert resolution.paths[1]["d"].count("M ") > 10
     with TTFont(reference) as font:
-        assert set(font.getBestCmap()) == {0xE100, 0xE101, 0xE102}
+        assert set(font.getBestCmap()) == {
+            0x4E00,
+            0xE100,
+            0xE101,
+            0xE102,
+        }
+
+
+def test_match_font_succeeds_without_zi_tools_kage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+    calls = []
+
+    def failing_resolver(ids: str):
+        calls.append(ids)
+        raise ValueError("No KAGE data.")
+
+    monkeypatch.setattr(
+        builder_module,
+        "load_cjkvi_ids",
+        lambda: IDS_DATA,
+    )
+    result = builder_module.build(
+        ["⿰□古"],
+        tmp_path / "build",
+        output_format="ttf",
+        match_font=reference,
+        resolver=failing_resolver,
+        delay=0,
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+
+    assert calls == ["⿰□古"]
+    assert mapping["glyphs"]["⿰□古"]["outline_provider"] == "reference.ttf"
 
 
 def generated_proxy_resolution(ids: str) -> SvgResolution:

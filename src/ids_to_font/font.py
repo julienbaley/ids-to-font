@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import statistics
 import warnings
+from math import ceil, hypot
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -156,24 +157,104 @@ def reference_han_metrics(path: Path) -> dict:
         }
 
 
+def flatten_contour(coordinates, flags, start: int, end: int) -> list[tuple[float, float]]:
+    points = [
+        (tuple(coordinates[index]), bool(flags[index] & flagOnCurve))
+        for index in range(start, end + 1)
+    ]
+    if points[0][1]:
+        first = points[0][0]
+        remaining = points[1:]
+    elif points[-1][1]:
+        first = points[-1][0]
+        remaining = points[:-1]
+    else:
+        first = (
+            (points[-1][0][0] + points[0][0][0]) / 2,
+            (points[-1][0][1] + points[0][0][1]) / 2,
+        )
+        remaining = points
+    flattened = [first]
+    current = first
+    index = 0
+    while index < len(remaining):
+        point, on_curve = remaining[index]
+        if on_curve:
+            flattened.append(point)
+            current = point
+            index += 1
+            continue
+        if index + 1 < len(remaining):
+            following, following_on_curve = remaining[index + 1]
+        else:
+            following, following_on_curve = first, True
+        target = (
+            following
+            if following_on_curve
+            else (
+                (point[0] + following[0]) / 2,
+                (point[1] + following[1]) / 2,
+            )
+        )
+        steps = min(
+            32,
+            max(
+                4,
+                ceil(
+                    (
+                        hypot(point[0] - current[0], point[1] - current[1])
+                        + hypot(target[0] - point[0], target[1] - point[1])
+                    )
+                    / 16
+                ),
+            ),
+        )
+        for step in range(1, steps + 1):
+            ratio = step / steps
+            inverse = 1 - ratio
+            flattened.append(
+                (
+                    inverse * inverse * current[0]
+                    + 2 * inverse * ratio * point[0]
+                    + ratio * ratio * target[0],
+                    inverse * inverse * current[1]
+                    + 2 * inverse * ratio * point[1]
+                    + ratio * ratio * target[1],
+                )
+            )
+        current = target
+        index += 2 if following_on_curve else 1
+    return flattened
+
+
+def signed_area(points: list[tuple[float, float]]) -> float:
+    return sum(
+        left[0] * right[1] - right[0] * left[1]
+        for left, right in zip(points, [*points[1:], points[0]])
+    ) / 2
+
+
 def glyph_geometry(glyph):
-    """Return the filled union of the straight contours in one KAGE glyph."""
+    """Return the filled geometry of a generated glyph."""
     coordinates, end_points, flags = glyph.getCoordinates(None)
-    polygons = []
+    contours = []
     start = 0
     for end in end_points:
-        if not all(flags[index] & flagOnCurve for index in range(start, end + 1)):
-            raise ValueError(
-                "Automatic density matching requires polygonal KAGE outlines."
-            )
-        points = [tuple(coordinates[index]) for index in range(start, end + 1)]
+        points = flatten_contour(coordinates, flags, start, end)
         geometry = make_valid(Polygon(points))
         if not geometry.is_empty:
-            polygons.append(geometry)
+            contours.append((signed_area(points), geometry))
         start = end + 1
-    if not polygons:
+    if not contours:
         raise ValueError("A generated glyph has no fillable outline.")
-    return unary_union(polygons)
+    outer_sign = -1 if max(contours, key=lambda item: abs(item[0]))[0] < 0 else 1
+    outers = unary_union(
+        [geometry for area, geometry in contours if area * outer_sign > 0]
+    )
+    holes = unary_union(
+        [geometry for area, geometry in contours if area * outer_sign < 0]
+    )
+    return outers.difference(holes)
 
 
 def polygon_parts(geometry) -> list[Polygon]:

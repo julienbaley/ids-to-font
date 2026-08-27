@@ -12,11 +12,11 @@ IDS component glyphs are zero-width placeholders, so generated IDS fonts must
 be used in explicit font runs rather than as global fallbacks.
 
 When an unresolved IDS contains exactly one `□` lacuna component, the tool
-learns its allocation from matching examples in `--match-font`, or from
-generated Zi.tools proxies when no reference font is supplied. Zi.tools' KAGE
-stroke program identifies the missing component structurally, so every SVG
-path belonging to readable strokes is preserved unchanged. A dotted polygonal
-box is added in the damaged region.
+uses matching glyphs from `--match-font` for both component allocation and
+surviving readable contours. Without a reference font, generated Zi.tools
+proxies supply both layout and outlines; their KAGE stroke programs identify
+the missing component structurally. A dotted polygonal box is added in the
+damaged region.
 
 Generated TrueType outlines are marked as containing overlapping contours so
 stroke intersections retain the source SVG's filled appearance. Each

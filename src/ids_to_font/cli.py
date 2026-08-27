@@ -57,7 +57,8 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Reference TTF/OTF whose full-width Han glyph size, baseline, "
-            "and line metrics should be matched"
+            "and line metrics should be matched; also supplies surviving "
+            "outlines for IDS lacunae"
         ),
     )
     result.add_argument(

@@ -1,39 +1,31 @@
 from __future__ import annotations
 
 import json
-import math
-import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from fontTools.pens.boundsPen import BoundsPen
-from fontTools.pens.recordingPen import RecordingPen
-from fontTools.pens.svgPathPen import SVGPathPen
-from fontTools.ttLib import TTFont
-
 from ids_to_font.lacuna import (
-    align_proxy_resolutions,
-    extract_surviving_strokes,
+    LAYOUT_PROXIES,
     ids_definitions,
-    lacuna_path,
     load_cjkvi_ids,
-    matching_characters,
     normalize_same_axis,
     parse_ids,
     replace_lacuna,
     serialize_ids,
+    synthesize_from_reference,
+    synthesize_from_zi_tools,
 )
 from ids_to_font.zi_tools import SvgResolution, fetch_resolution
 
 
-OUTPUT = Path(__file__).with_name(
+HERE = Path(__file__).parent
+OUTPUT = HERE / (
     "lacuna-17-zitools-babelstone-"
     f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.svg"
 )
-CACHE = Path(__file__).with_name("lacuna-zitools-cache.json")
+CACHE = HERE / "lacuna-zitools-cache.json"
 FONT_PATH = Path(
     "/home/julien/projets/spelling/vendor/babelstone-han/BabelStoneHan.ttf"
 )
@@ -56,185 +48,37 @@ EXPRESSIONS = [
     "⿱□皿",
     "⿱甾□",
 ]
-PROXIES = ("丯", "巛", "巿", "爿", "𡵂")
-BABELSTONE_OVERRIDES = {
-    "⿰□睪": {
-        "character": "澤",
-        "contours": (3, 4, 5, 6),
-    },
-    "⿱甾□": {
-        "character": "甾",
-        "contours": tuple(range(8)),
-        "target": (4, 4, 91, 61),
-        "region": (4, 64, 91, 91),
-    },
-}
 
 
-@dataclass(frozen=True)
-class FontContour:
-    path: str
-    bounds: tuple[float, float, float, float]
-
-    @property
-    def center(self):
-        left, top, right, bottom = self.bounds
-        return (left + right) / 2, (top + bottom) / 2
-
-
-def median_region(samples):
-    return tuple(
-        statistics.median(sample[1][index] for sample in samples)
-        for index in range(4)
+def cached_resolution(name: str, value: dict) -> SvgResolution:
+    return SvgResolution(
+        requested_ids=name,
+        resolved_ids=value["resolved_ids"],
+        view_box=value["view_box"],
+        paths=tuple(value["paths"]),
+        kage=tuple(value.get("kage", ())),
     )
 
 
-def closest(samples, region):
-    return min(
-        samples,
-        key=lambda sample: sum(
-            (sample[1][index] - region[index]) ** 2
-            for index in range(4)
-        ),
-    )
-
-
-def valid_region(region):
-    left, top, right, bottom = region
-    return (
-        all(math.isfinite(value) for value in region)
-        and right > left
-        and bottom > top
-    )
-
-
-def dotted_box(region):
-    left, top, right, bottom = region
-    inset = min(5, max(2.5, min(right - left, bottom - top) * 0.08))
-    left, top = left + inset, top + inset
-    right, bottom = right - inset, bottom - inset
-    width, height = right - left, bottom - top
-    step = max(3.8, min(width, height) / 7)
-    radius = min(1, step * 0.22)
-    columns = max(2, round(width / step))
-    rows = max(2, round(height / step))
-    centers = []
-    for index in range(columns + 1):
-        x = left + width * index / columns
-        centers.extend(((x, top), (x, bottom)))
-    for index in range(1, rows):
-        y = top + height * index / rows
-        centers.extend(((left, y), (right, y)))
+def svg_paths(resolution: SvgResolution) -> str:
     return "".join(
-        f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{radius:.2f}"/>'
-        for x, y in centers
+        f'<path d="{escape(path["d"])}" '
+        f'transform="{escape(path.get("transform", ""))}"/>'
+        for path in resolution.paths
     )
 
 
-def zi_paths(strokes):
-    paths = "".join(
-        f'<path d="{escape(stroke.path["d"])}" '
-        f'transform="{escape(stroke.path.get("transform", ""))}"/>'
-        for stroke in strokes
-    )
-    return f'<g fill="#111" fill-rule="nonzero">{paths}</g>'
+def source_label(resolution: SvgResolution) -> str:
+    provider = resolution.metadata["outline_provider"]
+    example = resolution.metadata["outline_example"]
+    count = resolution.metadata["layout_sample_size"]
+    return f"{provider}: {example} ({count})"
 
 
-def fit_transform(bounds, target=(4, 4, 91, 91)):
-    x_min, y_min, x_max, y_max = bounds
-    width, height = x_max - x_min, y_max - y_min
-    left, top, right, bottom = target
-    target_width, target_height = right - left, bottom - top
-    scale = min(target_width / width, target_height / height)
-    x_offset = left + (target_width - width * scale) / 2 - x_min * scale
-    y_offset = top + (target_height - height * scale) / 2 + y_max * scale
-    return scale, x_offset, y_offset
-
-
-def retain_enclosed_contours(all_contours, retained):
-    retained_ids = {id(contour) for contour in retained}
-    for contour in all_contours:
-        if id(contour) in retained_ids:
-            continue
-        left, top, right, bottom = contour.bounds
-        if any(
-            parent.bounds[0] <= left
-            and parent.bounds[1] <= top
-            and parent.bounds[2] >= right
-            and parent.bounds[3] >= bottom
-            for parent in retained
-        ):
-            retained_ids.add(id(contour))
-    return [
-        contour
-        for contour in all_contours
-        if id(contour) in retained_ids
-    ]
-
-
-def font_contours(
-    font,
-    glyph_set,
-    cmap,
-    character,
-    target=(4, 4, 91, 91),
-):
-    glyph_name = cmap[ord(character)]
-    bounds_pen = BoundsPen(glyph_set)
-    glyph_set[glyph_name].draw(bounds_pen)
-    scale, x_offset, y_offset = fit_transform(bounds_pen.bounds, target)
-
-    recording = RecordingPen()
-    glyph_set[glyph_name].draw(recording)
-    contour_records = []
-    current = []
-    for record in recording.value:
-        current.append(record)
-        if record[0] in {"closePath", "endPath"}:
-            contour_records.append(current)
-            current = []
-    contours = []
-    for records in contour_records:
-        contour = RecordingPen()
-        contour.value = records
-        raw_bounds = BoundsPen(glyph_set)
-        contour.replay(raw_bounds)
-        if raw_bounds.bounds is None:
-            continue
-        left, bottom, right, top = raw_bounds.bounds
-        path_pen = SVGPathPen(glyph_set)
-        contour.replay(path_pen)
-        contours.append(
-            FontContour(
-                path_pen.getCommands(),
-                (
-                    left * scale + x_offset,
-                    -top * scale + y_offset,
-                    right * scale + x_offset,
-                    -bottom * scale + y_offset,
-                ),
-            )
-        )
-    return contours, (scale, x_offset, y_offset)
-
-
-def babelstone_paths(contours, transform):
-    scale, x_offset, y_offset = transform
-    path = " ".join(contour.path for contour in contours)
-    return (
-        f'<path fill="#111" fill-rule="nonzero" d="{escape(path)}" '
-        f'transform="matrix({scale:.8f} 0 0 {-scale:.8f} '
-        f'{x_offset:.8f} {y_offset:.8f})"/>'
-    )
-
-
-def main():
+def main() -> None:
     print(f"Writing {OUTPUT}", flush=True)
     ids_data = load_cjkvi_ids()
     definitions = ids_definitions(ids_data)
-    font = TTFont(FONT_PATH)
-    cmap = font.getBestCmap()
-    glyph_set = font.getGlyphSet()
     patterns = {
         ids: normalize_same_axis(parse_ids(ids), definitions)
         for ids in EXPRESSIONS
@@ -243,7 +87,7 @@ def main():
     templates = {
         serialize_ids(replace_lacuna(pattern, proxy))
         for pattern in patterns.values()
-        for proxy in PROXIES
+        for proxy in LAYOUT_PROXIES
     }
     missing = sorted(
         template
@@ -255,7 +99,7 @@ def main():
         )
     )
 
-    def fetch_template(template):
+    def fetch_template(template: str):
         try:
             resolution = fetch_resolution(template)
         except (OSError, ValueError):
@@ -269,16 +113,14 @@ def main():
 
     if missing:
         print(f"Fetching {len(missing)} Zi.tools templates concurrently", flush=True)
-        completed = 0
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {
                 executor.submit(fetch_template, template): template
                 for template in missing
             }
-            for future in as_completed(futures):
+            for completed, future in enumerate(as_completed(futures), start=1):
                 template, value = future.result()
                 cache[template] = value
-                completed += 1
                 print(
                     f"\rZi.tools [{completed}/{len(missing)}]",
                     end="",
@@ -290,63 +132,11 @@ def main():
             encoding="utf-8",
         )
 
-    def babelstone_sample(pattern, path):
-        samples = []
-        for character in matching_characters(pattern, ids_data):
-            if ord(character) not in cmap:
-                continue
-            try:
-                contours, transform = font_contours(
-                    font, glyph_set, cmap, character
-                )
-                surviving, region = extract_surviving_strokes(
-                    contours,
-                    pattern,
-                    path,
-                )
-                surviving = retain_enclosed_contours(contours, surviving)
-            except ValueError:
-                continue
-            if not valid_region(region):
-                continue
-            samples.append((character, region, surviving, transform))
-            if len(samples) == 8:
-                break
-        if not samples:
-            raise ValueError("No BabelStone examples.")
-        region = median_region(samples)
-        sample = closest(samples, region)
-        return sample[0], region, sample[2], sample[3], len(samples)
-
-    def zi_sample(pattern, path):
-        resolutions = []
-        for proxy in PROXIES:
-            template = serialize_ids(replace_lacuna(pattern, proxy))
-            value = cache.get(template)
-            if value is None or not value.get("kage"):
-                continue
-            resolution = SvgResolution(
-                requested_ids=template,
-                resolved_ids=value["resolved_ids"],
-                view_box=value["view_box"],
-                paths=tuple(value["paths"]),
-                kage=tuple(value["kage"]),
-            )
-            resolutions.append((template, proxy, resolution))
-        samples = [
-            (name, region, surviving)
-            for name, surviving, region in align_proxy_resolutions(
-                resolutions,
-                pattern,
-                path,
-            )
-            if valid_region(region)
-        ]
-        if not samples:
-            raise ValueError("No Zi.tools examples.")
-        region = median_region(samples)
-        sample = closest(samples, region)
-        return sample[0], region, sample[2], len(samples)
+    def resolver(ids: str) -> SvgResolution:
+        value = cache.get(ids)
+        if value is None or not value.get("kage"):
+            raise ValueError(f"No cached KAGE response for {ids}.")
+        return cached_resolution(ids, value)
 
     row_height = 111
     header = 32
@@ -354,81 +144,53 @@ def main():
     height = header + row_height * len(EXPRESSIONS) + 8
     content = []
     for index, ids in enumerate(EXPRESSIONS):
-        filled = "█" * index
-        empty = "·" * (len(EXPRESSIONS) - index)
         print(
-            f"\r[{filled}{empty}] {index}/{len(EXPRESSIONS)} {ids}",
+            f"\r[{'█' * index}{'·' * (len(EXPRESSIONS) - index)}] "
+            f"{index}/{len(EXPRESSIONS)} {ids}",
             end="",
             flush=True,
         )
-        pattern = patterns[ids]
-        path = lacuna_path(pattern)
-        override = BABELSTONE_OVERRIDES.get(ids)
-        if override:
-            bs_character = override["character"]
-            all_contours, bs_transform = font_contours(
-                font,
-                glyph_set,
-                cmap,
-                bs_character,
-                override.get("target", (4, 4, 91, 91)),
+        zi_resolution = synthesize_from_zi_tools(
+            ids,
+            ids_data,
+            resolver,
+            delay=0,
+        )
+        try:
+            reference_resolution = synthesize_from_reference(
+                ids,
+                FONT_PATH,
+                ids_data,
             )
-            bs_contours = [
-                all_contours[index]
-                for index in override["contours"]
-            ]
-            bs_contours = retain_enclosed_contours(
-                all_contours,
-                bs_contours,
-            )
-            if "region" in override:
-                bs_region = override["region"]
-            else:
-                _, bs_region = extract_surviving_strokes(
-                    all_contours,
-                    pattern,
-                    path,
-                )
-            bs_count = 1
-        else:
-            (
-                bs_character,
-                bs_region,
-                bs_contours,
-                bs_transform,
-                bs_count,
-            ) = babelstone_sample(pattern, path)
-        zi_name, zi_region, zi_strokes, zi_count = zi_sample(pattern, path)
-        filled = "█" * (index + 1)
-        empty = "·" * (len(EXPRESSIONS) - index - 1)
+        except ValueError:
+            reference_resolution = zi_resolution
         print(
-            f"\r[{filled}{empty}] {index + 1}/{len(EXPRESSIONS)} {ids} "
-            f"(Zi: {zi_name}; BS: {bs_character})",
+            f"\r[{'█' * (index + 1)}"
+            f"{'·' * (len(EXPRESSIONS) - index - 1)}] "
+            f"{index + 1}/{len(EXPRESSIONS)} {ids}",
             flush=True,
         )
         y = header + index * row_height
-        content.append(
-            f'<text class="label" x="112" y="{y + 43}">{escape(ids)}</text>'
-        )
-        content.append(
-            f'<text class="reference" x="112" y="{y + 53}">'
-            f"Zi: {escape(zi_name)} ({zi_count}); "
-            f"BS: {escape(bs_character)} ({bs_count})</text>"
-        )
-        content.append(
-            f'<g transform="translate(120 {y})">'
-            f'<g fill="#111">{dotted_box(zi_region)}</g>'
-            f"{zi_paths(zi_strokes)}"
-            '<rect class="box" width="95" height="95"/></g>'
-        )
-        content.append(
-            f'<g transform="translate(225 {y})">'
-            f'<g fill="#111">{dotted_box(bs_region)}</g>'
-            f"{babelstone_paths(bs_contours, bs_transform)}"
-            '<rect class="box" width="95" height="95"/></g>'
+        content.extend(
+            (
+                f'<text class="label" x="112" y="{y + 43}">'
+                f"{escape(ids)}</text>",
+                f'<text class="reference" x="112" y="{y + 53}">'
+                f"Zi: {escape(source_label(zi_resolution))}; "
+                f"Ref: {escape(source_label(reference_resolution))}</text>",
+                f'<g transform="translate(120 {y})">'
+                f'<g fill="#111" fill-rule="nonzero">'
+                f"{svg_paths(zi_resolution)}</g>"
+                '<rect class="box" width="95" height="95"/></g>',
+                f'<g transform="translate(225 {y})">'
+                f'<g fill="#111" fill-rule="nonzero">'
+                f"{svg_paths(reference_resolution)}</g>"
+                '<rect class="box" width="95" height="95"/></g>',
+            )
         )
 
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg"
+    OUTPUT.write_text(
+        f"""<svg xmlns="http://www.w3.org/2000/svg"
  viewBox="0 0 {width} {height}" width="1320" height="{height * 4}">
 <rect width="{width}" height="{height}" fill="white"/>
 <style>
@@ -439,13 +201,13 @@ def main():
 .reference {{ font: 3.1px sans-serif; fill: #777; text-anchor: end; }}
 .box {{ fill: none; stroke: #d22; stroke-width: .7; }}
 </style>
-<text class="heading" x="167.5" y="17">Zi.tools/KAGE source</text>
-<text class="heading" x="272.5" y="17">BabelStone Han source</text>
+<text class="heading" x="167.5" y="17">Production without --match-font</text>
+<text class="heading" x="272.5" y="17">Production with --match-font</text>
 {''.join(content)}
 </svg>
-"""
-    OUTPUT.write_text(svg, encoding="utf-8")
-    font.close()
+""",
+        encoding="utf-8",
+    )
     print(f"Done: {OUTPUT}", flush=True)
 
 

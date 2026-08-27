@@ -262,25 +262,31 @@ def build(
                 raise
             if ids_data is None:
                 ids_data = load_cjkvi_ids()
+            reference_error = None
             if match_font is not None:
                 try:
                     return synthesize_from_reference(
                         ids,
                         match_font,
                         ids_data,
-                        resolver,
-                        delay=delay,
-                        sleeper=sleeper,
                     )
-                except ValueError:
-                    pass
-            return synthesize_from_zi_tools(
-                ids,
-                ids_data,
-                resolver,
-                delay=delay,
-                sleeper=sleeper,
-            )
+                except ValueError as error:
+                    reference_error = error
+            try:
+                return synthesize_from_zi_tools(
+                    ids,
+                    ids_data,
+                    resolver,
+                    delay=delay,
+                    sleeper=sleeper,
+                )
+            except ValueError as error:
+                if reference_error is not None:
+                    raise ValueError(
+                        "Reference-font lacuna synthesis failed: "
+                        f"{reference_error}; Zi.tools fallback failed: {error}"
+                    ) from error
+                raise
 
     resolutions = resolve_all(active_ids, resolve, delay, sleeper)
     font, calibration, output_names = build_ligature_font(

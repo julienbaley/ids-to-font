@@ -6,8 +6,10 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
+from shapely.geometry import Point
 
 from ids_to_font.builder import build, build_encoded
+from ids_to_font.font import glyph_geometry, resolution_to_glyph
 from ids_to_font.zi_tools import EncodedResolution, SvgResolution
 
 
@@ -51,6 +53,24 @@ def separated_strokes_resolution(ids: str) -> SvgResolution:
         paths=(
             {"d": "M 10,10 L 20,10 L 20,85 L 10,85 Z"},
             {"d": "M 75,10 L 85,10 L 85,85 L 75,85 Z"},
+        ),
+    )
+
+
+def curved_counter_resolution(ids: str) -> SvgResolution:
+    return SvgResolution(
+        requested_ids=ids,
+        resolved_ids=ids,
+        view_box="0 0 95 95",
+        paths=(
+            {
+                "d": (
+                    "M10 48 Q10 10 48 10 Q85 10 85 48 "
+                    "Q85 85 48 85 Q10 85 10 48 Z "
+                    "M35 48 Q35 60 48 60 Q60 60 60 48 "
+                    "Q60 35 48 35 Q35 35 35 48 Z"
+                ),
+            },
         ),
     )
 
@@ -351,6 +371,13 @@ def test_generated_glyphs_mark_overlapping_contours(tmp_path: Path) -> None:
         glyph = font["glyf"][glyph_name]
         assert glyph.numberOfContours > 0
         assert glyph.flags[0] & flagOverlapSimple
+
+
+def test_density_geometry_supports_curves_and_counters() -> None:
+    geometry = glyph_geometry(resolution_to_glyph(curved_counter_resolution("⿰鳥叴")))
+
+    assert geometry.area > 100_000
+    assert not geometry.contains(Point(512, 390))
 
 
 def test_separately_filled_paths_use_consistent_contour_winding(
