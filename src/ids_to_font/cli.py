@@ -88,6 +88,12 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Bypass and replace existing Zi.tools cache entries",
     )
+    result.add_argument(
+        "--lacuna-style",
+        choices=("dots", "dashes"),
+        default="dots",
+        help="Border style for □ lacunae in ligature mode (default: dots)",
+    )
     return result
 
 
@@ -95,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.mode == "unicode":
+            if args.lacuna_style != "dots":
+                raise ValueError(
+                    "--lacuna-style is only valid in ligature mode."
+                )
             result = build_encoded(
                 read_characters(args.input),
                 args.output_directory,
@@ -126,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
                 delay=args.delay,
                 cache_directory=args.cache_directory,
                 refresh_cache=args.refresh_cache,
+                lacuna_style=args.lacuna_style,
             )
     except (OSError, ValueError) as error:
         print(f"ids-to-font: {error}", file=sys.stderr)

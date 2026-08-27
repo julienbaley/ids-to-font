@@ -244,11 +244,14 @@ def build(
     sleeper: Callable[[float], None] = time.sleep,
     cache_directory: Path | None = None,
     refresh_cache: bool = False,
+    lacuna_style: str = "dots",
 ) -> BuildResult:
     if delay < 0:
         raise ValueError("Request delay must not be negative.")
     if output_format not in {"woff2", "ttf"}:
         raise ValueError("Output format must be 'woff2' or 'ttf'.")
+    if lacuna_style not in {"dots", "dashes"}:
+        raise ValueError("Lacuna style must be 'dots' or 'dashes'.")
     active_ids = sorted(set(expressions))
     if not active_ids:
         raise ValueError("At least one IDS expression is required.")
@@ -278,6 +281,7 @@ def build(
                         ids,
                         match_font,
                         ids_data,
+                        lacuna_style=lacuna_style,
                     )
                 except ValueError as error:
                     reference_error = error
@@ -288,6 +292,7 @@ def build(
                     resolver,
                     delay=0 if resolver_owns_delay else delay,
                     sleeper=sleeper,
+                    lacuna_style=lacuna_style,
                 )
             except ValueError as error:
                 if reference_error is not None:

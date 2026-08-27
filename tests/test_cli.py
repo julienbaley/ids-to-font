@@ -45,6 +45,19 @@ def test_accepts_cache_controls() -> None:
     assert args.refresh_cache is True
 
 
+def test_accepts_dashed_lacuna_style() -> None:
+    args = parser().parse_args(
+        [
+            "ids.txt",
+            "--output-directory",
+            "build",
+            "--lacuna-style",
+            "dashes",
+        ]
+    )
+    assert args.lacuna_style == "dashes"
+
+
 def test_accepts_unicode_mode_and_latex_primary_font() -> None:
     args = parser().parse_args(
         [

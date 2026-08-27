@@ -397,6 +397,7 @@ def synthesize_structural_reference(
     normalized: IdsNode,
     reference_font: Path,
     font: TTFont,
+    lacuna_style: str,
 ) -> SvgResolution:
     path = lacuna_path(pattern)
     if (
@@ -439,10 +440,11 @@ def synthesize_structural_reference(
         view_box="0 0 95 95",
         paths=(
             {"d": " ".join(contour.path for contour in contours)},
-            {"d": dotted_path(normalized_lacuna)},
+            {"d": lacuna_mark_path(normalized_lacuna, lacuna_style)},
         ),
         metadata={
             "synthetic_lacuna": True,
+            "lacuna_style": lacuna_style,
             "structural_fallback": True,
             "layout_provider": "IDS structure",
             "layout_example": serialize_ids(normalized),
@@ -919,6 +921,51 @@ def dotted_path(region: tuple[float, float, float, float]) -> str:
     return " ".join(commands)
 
 
+def dashed_path(region: tuple[float, float, float, float]) -> str:
+    left, top, right, bottom = inset_region(region)
+    thickness = 1.5
+    dash = 5.5
+    gap = 3.5
+    commands = []
+
+    def rectangles(start: float, end: float, fixed: float, horizontal: bool) -> None:
+        span = end - start
+        count = max(2, round((span + gap) / (dash + gap)))
+        spacing = (span - count * dash) / (count - 1)
+        for index in range(count):
+            position = start + index * (dash + spacing)
+            finish = position + dash
+            if horizontal:
+                commands.append(
+                    f"M {position:.4f},{fixed - thickness / 2:.4f} "
+                    f"H {finish:.4f} V {fixed + thickness / 2:.4f} "
+                    f"H {position:.4f} Z"
+                )
+            else:
+                commands.append(
+                    f"M {fixed - thickness / 2:.4f},{position:.4f} "
+                    f"H {fixed + thickness / 2:.4f} V {finish:.4f} "
+                    f"H {fixed - thickness / 2:.4f} Z"
+                )
+
+    rectangles(left, right, top, True)
+    rectangles(left, right, bottom, True)
+    rectangles(top, bottom, left, False)
+    rectangles(top, bottom, right, False)
+    return " ".join(commands)
+
+
+def lacuna_mark_path(
+    region: tuple[float, float, float, float],
+    style: str,
+) -> str:
+    if style == "dots":
+        return dotted_path(region)
+    if style == "dashes":
+        return dashed_path(region)
+    raise ValueError("Lacuna style must be 'dots' or 'dashes'.")
+
+
 def synthesize_from_samples(
     ids: str,
     layout_samples: list[
@@ -938,6 +985,7 @@ def synthesize_from_samples(
         ]
     ] | None = None,
     outline_provider: str | None = None,
+    lacuna_style: str = "dots",
 ) -> SvgResolution:
     if not layout_samples:
         raise ValueError(
@@ -973,14 +1021,14 @@ def synthesize_from_samples(
                     for contour in surviving
                 )
             },
-            {"d": dotted_path(median_region)},
+            {"d": lacuna_mark_path(median_region, lacuna_style)},
         )
     else:
         output_paths = tuple(
             stroke.path
             for stroke in surviving
             if stroke.path is not None
-        ) + ({"d": dotted_path(median_region)},)
+        ) + ({"d": lacuna_mark_path(median_region, lacuna_style)},)
     return SvgResolution(
         requested_ids=ids,
         resolved_ids=ids,
@@ -988,6 +1036,7 @@ def synthesize_from_samples(
         paths=output_paths,
         metadata={
             "synthetic_lacuna": True,
+            "lacuna_style": lacuna_style,
             "layout_provider": layout_provider,
             "layout_example": layout_example[0],
             "layout_sample_size": len(layout_samples),
@@ -1038,6 +1087,7 @@ def synthesize_from_reference(
     reference_font: Path,
     ids_data: str,
     sample_size: int = 8,
+    lacuna_style: str = "dots",
 ) -> SvgResolution:
     original_pattern = parse_ids(ids)
     pattern = normalize_same_axis(original_pattern, ids_definitions(ids_data))
@@ -1069,12 +1119,14 @@ def synthesize_from_reference(
                 pattern,
                 reference_font,
                 font,
+                lacuna_style,
             )
     return synthesize_from_samples(
         ids,
         samples,
         reference_font.name,
         CJKVI_IDS_URL,
+        lacuna_style=lacuna_style,
     )
 
 
@@ -1086,6 +1138,7 @@ def synthesize_from_zi_tools(
     max_attempts: int = 24,
     delay: float = 10,
     sleeper: Callable[[float], None] = time.sleep,
+    lacuna_style: str = "dots",
 ) -> SvgResolution:
     pattern = normalize_same_axis(parse_ids(ids), ids_definitions(ids_data))
     path = lacuna_path(pattern)
@@ -1103,4 +1156,5 @@ def synthesize_from_zi_tools(
         samples,
         "Zi.tools",
         CJKVI_IDS_URL,
+        lacuna_style=lacuna_style,
     )

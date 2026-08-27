@@ -20,6 +20,17 @@ damaged region. If no complete matching reference glyph exists, a readable
 top-level component available in the reference font can be placed directly
 from the normalized IDS structure.
 
+Dots are the default lacuna border. Select a dashed border for a build with:
+
+```bash
+ids-to-font ids.txt \
+  --lacuna-style dashes \
+  --output-directory build
+```
+
+The selected `dots` or `dashes` style is recorded in each synthesized
+lacuna's output metadata.
+
 Generated TrueType outlines are marked as containing overlapping contours so
 stroke intersections retain the source SVG's filled appearance. Each
 separately filled SVG stroke is also normalized to the same contour direction

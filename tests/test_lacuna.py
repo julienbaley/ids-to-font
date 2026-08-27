@@ -9,6 +9,7 @@ from ids_to_font import builder as builder_module
 from ids_to_font.lacuna import (
     PROXY_STROKE_COUNTS,
     align_proxy_resolutions,
+    dashed_path,
     dotted_path,
     extract_proxy_strokes,
     ids_definitions,
@@ -134,6 +135,7 @@ def test_synthesizes_dotted_lacuna_from_reference_examples(
     )
     assert resolution.metadata == {
         "synthetic_lacuna": True,
+        "lacuna_style": "dots",
         "layout_provider": "reference.ttf",
         "layout_example": "\uE101",
         "layout_sample_size": 3,
@@ -218,17 +220,30 @@ def test_structural_reference_fallback_builds_unattested_three_stack(
         resolver=no_kage_resolver,
         delay=0,
     )
+    dashed = builder_module.build(
+        ["⿱甾□"],
+        tmp_path / "dashed",
+        output_format="ttf",
+        match_font=reference,
+        resolver=no_kage_resolver,
+        delay=0,
+        lacuna_style="dashes",
+    )
     mapping = json.loads(first.mapping_path.read_text(encoding="utf-8"))
+    dashed_mapping = json.loads(dashed.mapping_path.read_text(encoding="utf-8"))
     glyph = mapping["glyphs"]["⿱甾□"]
 
-    assert calls == ["⿱甾□", "⿱甾□"]
+    assert calls == ["⿱甾□", "⿱甾□", "⿱甾□"]
     assert first.font_path.name == second.font_path.name
     assert first.font_path.read_bytes() == second.font_path.read_bytes()
+    assert first.font_path.read_bytes() != dashed.font_path.read_bytes()
     assert glyph["structural_fallback"] is True
+    assert glyph["lacuna_style"] == "dots"
     assert glyph["layout_provider"] == "IDS structure"
     assert glyph["layout_example"] == "⿳巛田□"
     assert glyph["outline_provider"] == "reference.ttf"
     assert glyph["outline_example"] == "甾"
+    assert dashed_mapping["glyphs"]["⿱甾□"]["lacuna_style"] == "dashes"
 
 
 def generated_proxy_resolution(ids: str) -> SvgResolution:
@@ -394,3 +409,12 @@ def test_dotted_lacuna_uses_only_polygonal_outlines() -> None:
 
     assert "A " not in path
     assert path.count(" L ") > 10
+
+
+def test_dashed_lacuna_uses_polygonal_segments_reaching_each_edge() -> None:
+    path = dashed_path((5, 5, 40, 90))
+
+    assert "A " not in path
+    assert path.count("M ") > 10
+    assert "7.8000" in path
+    assert "87.2000" in path
