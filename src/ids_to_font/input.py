@@ -9,6 +9,8 @@ from pathlib import Path
 
 IDS_OPERATORS = frozenset(chr(value) for value in range(0x2FF0, 0x3000))
 CODEPOINT = re.compile(r"U\+([0-9A-Fa-f]{1,6})")
+TOFU_QUESTION_REQUEST = "{?}"
+TOFU_QUESTION_CHARACTER = "?"
 
 
 def normalize_ids(value: str, line_number: int | None = None) -> str:
@@ -16,6 +18,8 @@ def normalize_ids(value: str, line_number: int | None = None) -> str:
     location = f" on line {line_number}" if line_number is not None else ""
     if not value:
         raise ValueError(f"Empty IDS expression{location}.")
+    if value == TOFU_QUESTION_REQUEST:
+        return TOFU_QUESTION_CHARACTER
     if value[0] not in IDS_OPERATORS:
         raise ValueError(f"IDS expression must begin with an IDS operator{location}.")
     if value.startswith("{") or value.endswith("}"):

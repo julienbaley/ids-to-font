@@ -24,6 +24,7 @@ from .zi_tools import EncodedResolution, SvgResolution
 
 
 LACUNA = "□"
+TOFU_QUESTION = "?"
 IDS_ARITY = {
     "⿰": 2,
     "⿱": 2,
@@ -1112,6 +1113,42 @@ def lacuna_mark_path(
     if style == "dashes":
         return dashed_path(region)
     raise ValueError("Lacuna style must be 'dots' or 'dashes'.")
+
+
+def synthesize_question_tofu(
+    lacuna_style: str = "dots",
+) -> SvgResolution:
+    question_path = (
+        "M 31,31 "
+        "Q 31,17 47,17 "
+        "Q 64,17 64,31 "
+        "Q 64,41 54,47 "
+        "Q 49,50 49,58 "
+        "L 40,58 "
+        "Q 40,45 49,39 "
+        "Q 55,35 55,31 "
+        "Q 55,25 47,25 "
+        "Q 40,25 40,32 Z "
+        "M 40,68 "
+        "Q 40,63 45,63 "
+        "Q 50,63 50,68 "
+        "Q 50,73 45,73 "
+        "Q 40,73 40,68 Z"
+    )
+    return SvgResolution(
+        requested_ids=TOFU_QUESTION,
+        resolved_ids=TOFU_QUESTION,
+        view_box="0 0 95 95",
+        paths=(
+            {"d": question_path},
+            {"d": lacuna_mark_path((0, 0, 95, 95), lacuna_style)},
+        ),
+        metadata={
+            "synthetic_tofu": True,
+            "lacuna_style": lacuna_style,
+            "outline_provider": "synthetic",
+        },
+    )
 
 
 def synthesize_from_samples(

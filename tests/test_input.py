@@ -16,6 +16,13 @@ def test_reads_unique_sorted_newline_input(tmp_path: Path) -> None:
     assert read_ids(path) == ["⿰鳥叴", "⿱弔口"]
 
 
+def test_reads_question_tofu_request(tmp_path: Path) -> None:
+    path = tmp_path / "ids.txt"
+    path.write_text("{?}\n", encoding="utf-8")
+
+    assert read_ids(path) == ["?"]
+
+
 @pytest.mark.parametrize("value", ["鳥", "{⿰鳥叴}", "⿰鳥 叴"])
 def test_rejects_non_plain_ids(value: str) -> None:
     with pytest.raises(ValueError):

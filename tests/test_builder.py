@@ -279,6 +279,36 @@ def test_builds_paired_fonts_and_mapping_by_default(tmp_path: Path) -> None:
     assert mapping["glyph_license"] == "GPL-3.0-only"
 
 
+def test_builds_local_question_tofu_with_selected_style(tmp_path: Path) -> None:
+    calls = []
+
+    def unexpected_resolver(ids: str) -> SvgResolution:
+        calls.append(ids)
+        raise AssertionError("Question tofu should not use Zi.tools.")
+
+    result = build(
+        ["?"],
+        tmp_path,
+        output_format="ttf",
+        delay=0,
+        resolver=unexpected_resolver,
+        lacuna_style="dashes",
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+
+    assert calls == []
+    assert mapping["glyphs"]["?"] == {
+        "glyph": "ids00000",
+        "synthetic_tofu": True,
+        "lacuna_style": "dashes",
+        "outline_provider": "synthetic",
+    }
+    with TTFont(result.font_path) as font:
+        assert font.getBestCmap() == {ord("?"): "uni003F"}
+        assert font["hmtx"]["uni003F"] == (0, 0)
+        assert font["glyf"]["ids00000"].numberOfContours > 2
+
+
 def test_builds_required_ligature_font_with_zero_width_components(
     tmp_path: Path,
 ) -> None:

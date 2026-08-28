@@ -12,7 +12,9 @@ from typing import Callable
 from .font import build_font, build_ligature_font
 from .manual_outline import resolve_manual_outline
 from .lacuna import (
+    TOFU_QUESTION,
     load_cjkvi_ids,
+    synthesize_question_tofu,
     synthesize_from_reference,
     synthesize_from_zi_tools,
 )
@@ -332,6 +334,8 @@ def build(
 
     def resolve(ids: str) -> SvgResolution:
         nonlocal ids_data
+        if ids == TOFU_QUESTION:
+            return synthesize_question_tofu(lacuna_style)
         custom = resolve_manual_outline(ids)
         if custom is not None:
             return custom
