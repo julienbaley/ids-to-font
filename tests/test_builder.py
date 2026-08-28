@@ -122,11 +122,29 @@ def write_reference_font(path: Path) -> None:
     pen.lineTo((950, 900))
     pen.lineTo((50, 900))
     pen.closePath()
+    question_pen = TTGlyphPen(None)
+    question_pen.moveTo((350, 200))
+    question_pen.lineTo((650, 200))
+    question_pen.lineTo((650, 700))
+    question_pen.lineTo((350, 700))
+    question_pen.closePath()
     builder = FontBuilder(1024, isTTF=True)
-    builder.setupGlyphOrder([".notdef", "uni4E00"])
-    builder.setupCharacterMap({0x4E00: "uni4E00"})
-    builder.setupGlyf({".notdef": TTGlyphPen(None).glyph(), "uni4E00": pen.glyph()})
-    builder.setupHorizontalMetrics({".notdef": (1024, 0), "uni4E00": (1024, 50)})
+    builder.setupGlyphOrder([".notdef", "uni003F", "uni4E00"])
+    builder.setupCharacterMap({0x003F: "uni003F", 0x4E00: "uni4E00"})
+    builder.setupGlyf(
+        {
+            ".notdef": TTGlyphPen(None).glyph(),
+            "uni003F": question_pen.glyph(),
+            "uni4E00": pen.glyph(),
+        }
+    )
+    builder.setupHorizontalMetrics(
+        {
+            ".notdef": (1024, 0),
+            "uni003F": (1024, 0),
+            "uni4E00": (1024, 50),
+        }
+    )
     builder.setupHorizontalHeader(ascent=900, descent=-100, lineGap=20)
     builder.setupOS2(
         sTypoAscender=900,
@@ -307,6 +325,24 @@ def test_builds_local_question_tofu_with_selected_style(tmp_path: Path) -> None:
         assert font.getBestCmap() == {ord("?"): "uni003F"}
         assert font["hmtx"]["uni003F"] == (0, 0)
         assert font["glyf"]["ids00000"].numberOfContours > 2
+
+
+def test_question_tofu_uses_match_font_question_mark(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+
+    result = build(
+        ["?"],
+        tmp_path / "build",
+        output_format="ttf",
+        match_font=reference,
+        delay=0,
+        resolver=lambda ids: pytest.fail(f"Unexpected lookup for {ids}"),
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+
+    assert mapping["glyphs"]["?"]["outline_provider"] == "reference.ttf"
+    assert mapping["glyphs"]["?"]["outline_character"] == "?"
 
 
 def test_builds_required_ligature_font_with_zero_width_components(

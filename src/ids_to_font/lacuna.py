@@ -1117,7 +1117,40 @@ def lacuna_mark_path(
 
 def synthesize_question_tofu(
     lacuna_style: str = "dots",
+    match_font: Path | None = None,
 ) -> SvgResolution:
+    if match_font is not None:
+        with TTFont(match_font) as font:
+            if ord(TOFU_QUESTION) in font.getBestCmap():
+                contours = transform_reference_contours(
+                    font_contours(font, TOFU_QUESTION),
+                    (21.375, 21.375, 73.625, 73.625),
+                )
+                return SvgResolution(
+                    requested_ids=TOFU_QUESTION,
+                    resolved_ids=TOFU_QUESTION,
+                    view_box="0 0 95 95",
+                    paths=(
+                        {
+                            "d": " ".join(
+                                contour.path
+                                for contour in contours
+                            )
+                        },
+                        {
+                            "d": lacuna_mark_path(
+                                (0, 0, 95, 95),
+                                lacuna_style,
+                            )
+                        },
+                    ),
+                    metadata={
+                        "synthetic_tofu": True,
+                        "lacuna_style": lacuna_style,
+                        "outline_provider": match_font.name,
+                        "outline_character": TOFU_QUESTION,
+                    },
+                )
     question_path = (
         "M 31,31 "
         "Q 31,17 47,17 "

@@ -335,7 +335,7 @@ def build(
     def resolve(ids: str) -> SvgResolution:
         nonlocal ids_data
         if ids == TOFU_QUESTION:
-            return synthesize_question_tofu(lacuna_style)
+            return synthesize_question_tofu(lacuna_style, match_font)
         custom = resolve_manual_outline(ids)
         if custom is not None:
             return custom
