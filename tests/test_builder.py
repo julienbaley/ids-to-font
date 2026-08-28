@@ -10,8 +10,13 @@ from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
 from shapely.geometry import Point
 
+from ids_to_font import font as font_module
 from ids_to_font.builder import build, build_encoded
-from ids_to_font.font import glyph_geometry, resolution_to_glyph
+from ids_to_font.font import (
+    glyph_geometry,
+    reference_han_metrics,
+    resolution_to_glyph,
+)
 from ids_to_font.zi_tools import EncodedResolution, SvgResolution
 
 
@@ -174,6 +179,76 @@ def write_light_reference_font(path: Path) -> None:
     builder.setupPost()
     builder.setupMaxp()
     builder.font.save(path)
+
+
+def test_caches_reference_han_metrics_by_font_content(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+    cache = tmp_path / "cache"
+    calls = []
+    measure = font_module.measure_reference_han_metrics
+
+    def counting_measure(path: Path) -> dict:
+        calls.append(path)
+        return measure(path)
+
+    monkeypatch.setattr(
+        font_module,
+        "measure_reference_han_metrics",
+        counting_measure,
+    )
+    first = reference_han_metrics(reference, cache)
+    second = reference_han_metrics(reference, cache)
+
+    assert first == second
+    assert calls == [reference]
+    assert len(list(cache.glob("*.json"))) == 1
+
+
+def test_reference_metrics_cache_invalidates_when_font_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+    cache = tmp_path / "cache"
+    calls = []
+    measure = font_module.measure_reference_han_metrics
+
+    def counting_measure(path: Path) -> dict:
+        calls.append(path)
+        return measure(path)
+
+    monkeypatch.setattr(
+        font_module,
+        "measure_reference_han_metrics",
+        counting_measure,
+    )
+    reference_han_metrics(reference, cache)
+    with TTFont(reference) as font:
+        font["head"].fontRevision = 2.0
+        font.save(reference)
+    reference_han_metrics(reference, cache)
+
+    assert calls == [reference, reference]
+    assert len(list(cache.glob("*.json"))) == 2
+
+
+def test_corrupt_reference_metrics_cache_fails_clearly(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference)
+    cache = tmp_path / "cache"
+    reference_han_metrics(reference, cache)
+    cache_path = next(cache.glob("*.json"))
+    cache_path.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Corrupt reference metrics cache entry"):
+        reference_han_metrics(reference, cache)
 
 
 def test_builds_paired_fonts_and_mapping_by_default(tmp_path: Path) -> None:
@@ -446,6 +521,38 @@ def test_builds_encoded_unicode_supplement_and_alias_package(
     assert r"\setCJKfallbackfamilyfont" in style
     assert "luaotfload.add_fallback" in style
     assert r"\idshanfamily" in style
+
+
+def test_builds_encoded_supplement_in_both_formats(
+    tmp_path: Path,
+) -> None:
+    primary = tmp_path / "primary.ttf"
+    write_reference_font(primary)
+    result = build_encoded(
+        ["𬘄"],
+        tmp_path / "output",
+        output_format="both",
+        latex_primary_font=primary,
+        delay=0,
+        resolver=encoded_resolution,
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+
+    assert set(result.font_paths) == {"woff2", "ttf"}
+    assert mapping["fonts"] == {
+        output_format: path.name
+        for output_format, path in result.font_paths.items()
+    }
+    assert mapping["font_formats"] == ["woff2", "ttf"]
+    assert mapping["latex_package"] == "unicode-supplement.sty"
+    assert result.font_paths["ttf"].name in result.style_path.read_text(
+        encoding="utf-8"
+    )
+    with (
+        TTFont(result.font_paths["woff2"]) as woff2,
+        TTFont(result.font_paths["ttf"]) as ttf,
+    ):
+        assert woff2.getBestCmap() == ttf.getBestCmap() == {0x2C604: "u2C604"}
 
 
 def test_rejects_ambiguous_encoded_decomposition(tmp_path: Path) -> None:

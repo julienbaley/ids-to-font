@@ -195,6 +195,12 @@ output mapping.
 Matching is optical rather than stylistic: outlines from different type
 designs will retain their individual stroke shapes.
 
+Reference-font calibration measurements are cached by the font's SHA-256
+under `$XDG_CACHE_HOME/ids-to-font/reference-metrics/`, or
+`~/.cache/ids-to-font/reference-metrics/` when `XDG_CACHE_HOME` is unset.
+Changing the font contents or the calibration algorithm automatically uses a
+different cache entry.
+
 Successful Zi.tools JSON responses are cached by exact lookup value under
 `$XDG_CACHE_HOME/ids-to-font/zi-tools/`, or
 `~/.cache/ids-to-font/zi-tools/` when `XDG_CACHE_HOME` is unset. The delay

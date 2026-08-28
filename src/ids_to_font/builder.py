@@ -450,10 +450,9 @@ def build_encoded(
 ) -> BuildResult:
     if delay < 0:
         raise ValueError("Request delay must not be negative.")
-    if output_format not in {"woff2", "ttf"}:
-        raise ValueError("Output format must be 'woff2' or 'ttf'.")
+    formats = output_formats(output_format)
     if latex_primary_font is not None:
-        if output_format != "ttf":
+        if "ttf" not in formats:
             raise ValueError("--latex-primary-font requires TTF output.")
         if not latex_primary_font.is_file():
             raise FileNotFoundError(latex_primary_font)
@@ -484,10 +483,10 @@ def build_encoded(
         family_name,
         font_date,
         copyright_notice,
-        output_format,
+        "ttf" if "ttf" in formats else "woff2",
         match_font,
     )
-    font_path = save_font(font, output_directory, basename, output_format)
+    font_paths = save_fonts(font, output_directory, basename, formats)
 
     aliases = {}
     for character in active_characters:
@@ -501,12 +500,12 @@ def build_encoded(
             aliases[ids] = ord(character)
 
     style_path = None
-    if output_format == "ttf":
+    if "ttf" in formats:
         style_path = output_directory / f"{basename}.sty"
         write_latex_package(
             style_path,
             basename,
-            font_path,
+            font_paths["ttf"],
             font_date,
             aliases,
             latex_primary_font,
@@ -518,8 +517,7 @@ def build_encoded(
         {
             "schema_version": "1.0",
             "font_family": family_name,
-            "font": font_path.name,
-            "font_format": output_format,
+            **font_manifest(font_paths),
             "mode": "unicode",
             **(
                 {"latex_package": style_path.name}
@@ -556,7 +554,7 @@ def build_encoded(
         },
     )
     return BuildResult(
-        font_paths={output_format: font_path},
+        font_paths=font_paths,
         mapping_path=mapping_path,
         style_path=style_path,
         glyph_count=len(active_characters),

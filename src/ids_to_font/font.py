@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
 import statistics
+import tempfile
 import warnings
 from math import ceil, hypot
 from datetime import UTC, datetime
@@ -25,6 +29,9 @@ from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
 from .zi_tools import SvgResolution
+
+
+REFERENCE_METRICS_CACHE_VERSION = "1"
 
 
 def empty_glyph():
@@ -93,7 +100,74 @@ def median_vertical_bounds(
     return statistics.median(heights), statistics.median(centers)
 
 
-def reference_han_metrics(path: Path) -> dict:
+def reference_metrics_cache_directory() -> Path:
+    root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return root / "ids-to-font" / "reference-metrics"
+
+
+def file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_reference_metrics_cache(path: Path, font_digest: str) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"Corrupt reference metrics cache entry {path}: {error}") from error
+    if (
+        not isinstance(record, dict)
+        or record.get("schema_version") != REFERENCE_METRICS_CACHE_VERSION
+        or record.get("font_sha256") != font_digest
+        or not isinstance(record.get("metrics"), dict)
+    ):
+        raise ValueError(
+            f"Corrupt reference metrics cache entry {path}: invalid metadata."
+        )
+    return record["metrics"]
+
+
+def write_reference_metrics_cache(
+    path: Path,
+    font_digest: str,
+    metrics: dict,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            json.dump(
+                {
+                    "schema_version": REFERENCE_METRICS_CACHE_VERSION,
+                    "font_sha256": font_digest,
+                    "metrics": metrics,
+                },
+                temporary,
+                separators=(",", ":"),
+            )
+            temporary.write("\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def measure_reference_han_metrics(path: Path) -> dict:
     """Measure full-width Han glyphs and line metrics in a reference font."""
     with TTFont(path) as font:
         upm = font["head"].unitsPerEm
@@ -155,6 +229,23 @@ def reference_han_metrics(path: Path) -> dict:
             "win_ascent": normalized(font["OS/2"].usWinAscent),
             "win_descent": normalized(font["OS/2"].usWinDescent),
         }
+
+
+def reference_han_metrics(
+    path: Path,
+    cache_directory: Path | None = None,
+) -> dict:
+    font_sha256 = file_digest(path)
+    directory = cache_directory or reference_metrics_cache_directory()
+    cache_path = directory / (
+        f"{REFERENCE_METRICS_CACHE_VERSION}-{font_sha256}.json"
+    )
+    cached = read_reference_metrics_cache(cache_path, font_sha256)
+    if cached is not None:
+        return cached
+    metrics = measure_reference_han_metrics(path)
+    write_reference_metrics_cache(cache_path, font_sha256, metrics)
+    return metrics
 
 
 def flatten_contour(coordinates, flags, start: int, end: int) -> list[tuple[float, float]]:
