@@ -225,6 +225,13 @@ ids-to-font ids.txt \
 The pinned FontTools and Brotli versions, identical inputs, format, and
 metadata produce the same font bytes.
 
+## Curated IDS outlines
+
+The package includes a small repository-owned set of manually repaired SVG
+outlines for IDS expressions whose Zi.tools output is unsuitable. These exact
+matches are used automatically before Zi.tools. The output mapping records
+`outline_provider: manual` and the packaged source filename.
+
 ## Output mapping
 
 The JSON contains:

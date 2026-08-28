@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from .font import build_font, build_ligature_font
+from .manual_outline import resolve_manual_outline
 from .lacuna import (
     load_cjkvi_ids,
     synthesize_from_reference,
@@ -331,6 +332,9 @@ def build(
 
     def resolve(ids: str) -> SvgResolution:
         nonlocal ids_data
+        custom = resolve_manual_outline(ids)
+        if custom is not None:
+            return custom
         try:
             return resolver(ids)
         except ValueError:

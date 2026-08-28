@@ -29,6 +29,9 @@ ids-to-font = "ids_to_font.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+ids_to_font = ["manual_outlines/*.svg"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
