@@ -570,14 +570,58 @@ def recover_known_component_contours(
             )
             if support >= required_other_samples:
                 retained_ids.add(id(candidate))
+        retained = [
+            contour
+            for contour in contours
+            if id(contour) in retained_ids
+        ]
+        missing = [
+            contour
+            for contour in contours
+            if id(contour) not in retained_ids
+        ]
+        if retained and missing:
+            retained_bounds = item_bounds(retained)
+            missing_bounds = item_bounds(missing)
+            left, top, right, bottom = region
+            if pattern.value == "⿰":
+                boundary = (
+                    (missing_bounds[2] + retained_bounds[0]) / 2
+                    if path[0] == 0
+                    else (retained_bounds[2] + missing_bounds[0]) / 2
+                )
+                region = (
+                    left,
+                    top,
+                    boundary,
+                    bottom,
+                ) if path[0] == 0 else (
+                    boundary,
+                    top,
+                    right,
+                    bottom,
+                )
+            else:
+                boundary = (
+                    (missing_bounds[3] + retained_bounds[1]) / 2
+                    if path[0] == 0
+                    else (retained_bounds[3] + missing_bounds[1]) / 2
+                )
+                region = (
+                    left,
+                    top,
+                    right,
+                    boundary,
+                ) if path[0] == 0 else (
+                    left,
+                    boundary,
+                    right,
+                    bottom,
+                )
         recovered.append(
             (
                 character,
-                [
-                    contour
-                    for contour in contours
-                    if id(contour) in retained_ids
-                ],
+                retained,
                 region,
             )
         )
