@@ -74,7 +74,6 @@ def write_reference_font(path: Path) -> None:
         "fen_sample3",
         "han",
         "zi",
-        "fen",
     ]
     glyphs = {".notdef": TTGlyphPen(None).glyph()}
     for index, name in enumerate(glyph_order[1:4]):
@@ -97,11 +96,6 @@ def write_reference_font(path: Path) -> None:
     rectangle(zi_pen, 100, 100, 900, 850)
     reverse_rectangle(zi_pen, 300, 300, 700, 650)
     glyphs["zi"] = zi_pen.glyph()
-    fen_pen = TTGlyphPen(None)
-    rectangle(fen_pen, 50, 550, 400, 900)
-    rectangle(fen_pen, 600, 550, 950, 900)
-    rectangle(fen_pen, 200, 100, 800, 520)
-    glyphs["fen"] = fen_pen.glyph()
     builder = FontBuilder(1000, isTTF=True)
     builder.setupGlyphOrder(glyph_order)
     builder.setupCharacterMap(
@@ -113,7 +107,6 @@ def write_reference_font(path: Path) -> None:
             0xE111: "fen_sample2",
             0xE112: "fen_sample3",
             0x4E00: "han",
-            0x5206: "fen",
             0x753E: "zi",
         }
     )
@@ -183,7 +176,6 @@ def test_synthesizes_dotted_lacuna_from_reference_examples(
     with TTFont(reference) as font:
         assert set(font.getBestCmap()) == {
             0x4E00,
-            0x5206,
             0x753E,
             0xE100,
             0xE101,

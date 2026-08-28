@@ -481,48 +481,107 @@ def retain_enclosed_contours(
 
 
 def recover_known_component_contours(
-    font: TTFont,
-    contours: list[ReferenceContour],
-    retained: list[ReferenceContour],
+    samples: list[
+        tuple[
+            str,
+            list[ReferenceContour],
+            list[ReferenceContour],
+            tuple[float, float, float, float],
+        ]
+    ],
     pattern: IdsNode,
     path: tuple[int, ...],
-) -> list[ReferenceContour]:
+) -> list[
+    tuple[
+        str,
+        list[ReferenceContour],
+        tuple[float, float, float, float],
+    ]
+]:
     if (
         len(path) != 1
         or pattern.value not in {"⿰", "⿱"}
         or len(pattern.children) != 2
     ):
-        return retained
+        return [
+            (character, retained, region)
+            for character, _, retained, region in samples
+        ]
     known_index = 1 - path[0]
-    known = pattern.children[known_index]
-    if known.children or known.value == LACUNA:
-        return retained
-    if ord(known.value) not in font.getBestCmap():
-        return retained
-    expected_count = len(font_contours(font, known.value))
-    if len(retained) >= expected_count:
-        return retained
-    retained_ids = {id(contour) for contour in retained}
-    candidates = [
-        contour
-        for contour in contours
-        if id(contour) not in retained_ids
-    ]
-    axis = 0 if pattern.value == "⿰" else 1
-    reverse = known_index == 1
-    candidates.sort(
-        key=lambda contour: contour.center[axis],
-        reverse=reverse,
-    )
-    retained_ids.update(
-        id(contour)
-        for contour in candidates[: expected_count - len(retained)]
-    )
-    return [
-        contour
-        for contour in contours
-        if id(contour) in retained_ids
-    ]
+
+    def known_region(region):
+        left, top, right, bottom = region
+        if pattern.value == "⿰":
+            return (
+                right if known_index == 1 else 0,
+                0,
+                95 if known_index == 1 else left,
+                95,
+            )
+        return (
+            0,
+            bottom if known_index == 1 else 0,
+            95,
+            95 if known_index == 1 else top,
+        )
+
+    def normalize_bounds(contour, region):
+        left, top, right, bottom = known_region(region)
+        x_scale = 95 / (right - left)
+        y_scale = 95 / (bottom - top)
+        return (
+            (contour.bounds[0] - left) * x_scale,
+            (contour.bounds[1] - top) * y_scale,
+            (contour.bounds[2] - left) * x_scale,
+            (contour.bounds[3] - top) * y_scale,
+        )
+
+    normalized = []
+    split_axis = 0 if pattern.value == "⿰" else 1
+    cross_axis = 1 - split_axis
+    for _, contours, retained, region in samples:
+        retained_ids = {id(contour) for contour in retained}
+        candidates = []
+        for contour in contours:
+            if id(contour) in retained_ids:
+                continue
+            bounds = normalize_bounds(contour, region)
+            if bounds[split_axis + 2] <= 0 or bounds[split_axis] >= 95:
+                continue
+            if bounds[cross_axis + 2] - bounds[cross_axis] > 55:
+                continue
+            candidates.append((contour, bounds))
+        normalized.append(candidates)
+    threshold = 80
+    required_other_samples = max(1, (len(samples) - 1) // 2)
+    recovered = []
+    for sample_index, sample in enumerate(samples):
+        character, contours, retained, region = sample
+        retained_ids = {id(contour) for contour in retained}
+        for candidate, candidate_bounds in normalized[sample_index]:
+            support = sum(
+                any(
+                    bounds_distance(candidate_bounds, other_bounds)
+                    <= threshold
+                    for _, other_bounds in other_contours
+                )
+                for other_index, other_contours in enumerate(normalized)
+                if other_index != sample_index
+            )
+            if support >= required_other_samples:
+                retained_ids.add(id(candidate))
+        recovered.append(
+            (
+                character,
+                [
+                    contour
+                    for contour in contours
+                    if id(contour) in retained_ids
+                ],
+                region,
+            )
+        )
+    return recovered
 
 
 def svg_strokes(
@@ -1144,7 +1203,7 @@ def synthesize_from_reference(
             for character in matching_characters(pattern, ids_data)
             if ord(character) in cmap
         ][:sample_size]
-        samples = []
+        reference_samples = []
         for character in candidates:
             contours = font_contours(font, character)
             surviving, region = extract_surviving_strokes(
@@ -1156,14 +1215,14 @@ def synthesize_from_reference(
                 contours,
                 surviving,
             )
-            surviving = recover_known_component_contours(
-                font,
-                contours,
-                surviving,
-                pattern,
-                path,
+            reference_samples.append(
+                (character, contours, surviving, region)
             )
-            samples.append((character, surviving, region))
+        samples = recover_known_component_contours(
+            reference_samples,
+            pattern,
+            path,
+        )
         if not samples:
             return synthesize_structural_reference(
                 ids,
