@@ -234,6 +234,7 @@ def calibration_metadata(calibration: dict | None, match_font: Path | None) -> d
             "target_density": round(calibration["target_density"], 8),
             "matched_density": round(calibration["matched_density"], 8),
             "outline_inset": calibration["inset"],
+            "outline_adjustment": calibration["outline_adjustment"],
         }
     }
 

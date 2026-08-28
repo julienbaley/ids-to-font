@@ -9,7 +9,7 @@ import re
 import statistics
 import tempfile
 import warnings
-from math import ceil, hypot
+from math import acos, ceil, hypot, pi
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,7 +24,8 @@ from fontTools.svgLib.path import parse_path
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOnCurve, flagOverlapSimple
 from shapely import make_valid
-from shapely.geometry import MultiPolygon, Polygon
+from shapely.affinity import scale as scale_geometry
+from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
@@ -325,8 +326,7 @@ def signed_area(points: list[tuple[float, float]]) -> float:
     ) / 2
 
 
-def glyph_geometry(glyph):
-    """Return the filled geometry of a generated glyph."""
+def glyph_contour_geometries(glyph):
     coordinates, end_points, flags = glyph.getCoordinates(None)
     contours = []
     start = 0
@@ -339,13 +339,25 @@ def glyph_geometry(glyph):
     if not contours:
         raise ValueError("A generated glyph has no fillable outline.")
     outer_sign = -1 if max(contours, key=lambda item: abs(item[0]))[0] < 0 else 1
-    outers = unary_union(
-        [geometry for area, geometry in contours if area * outer_sign > 0]
-    )
     holes = unary_union(
         [geometry for area, geometry in contours if area * outer_sign < 0]
     )
-    return outers.difference(holes)
+    return [
+        polygon
+        for area, geometry in contours
+        if area * outer_sign > 0
+        for polygon in polygon_parts(
+            make_valid(geometry.difference(holes))
+        )
+        if not polygon.is_empty
+    ], holes
+
+
+def glyph_geometry(glyph):
+    """Return the filled geometry of a generated glyph."""
+    filled_contours, holes = glyph_contour_geometries(glyph)
+    outers = unary_union(filled_contours)
+    return make_valid(outers.difference(holes))
 
 
 def polygon_parts(geometry) -> list[Polygon]:
@@ -389,25 +401,198 @@ def geometry_density(geometry) -> float:
     return geometry.area / box_area if box_area > 0 else 0
 
 
-def match_glyph_density(glyphs: dict, target_density: float) -> dict:
-    """Choose the closest safe bounded outline inset for the active glyphs."""
+def fit_protected_geometry(geometry):
+    """Keep synthetic markers within the font's horizontal safe area."""
+    left, _, right, _ = geometry.bounds
+    factors = [1.0]
+    if left < 512:
+        factors.append(488 / (512 - left))
+    if right > 512:
+        factors.append(488 / (right - 512))
+    horizontal_scale = min(factors)
+    if horizontal_scale >= 1:
+        return geometry
+    return make_valid(
+        scale_geometry(
+            geometry,
+            xfact=horizontal_scale,
+            yfact=1,
+            origin=(512, 0),
+        )
+    )
+
+
+def adaptive_thinning_inset(radius: float) -> float:
+    """Return the local inset for a stroke with the given half-width."""
+    if radius <= 2:
+        return 0
+    if radius < 6:
+        return (radius - 2) / 4
+    if radius < 14:
+        return 1 + 3 * (radius - 6) / 8
+    return 4
+
+
+def adaptive_ring_coordinates(coordinates, geometry):
+    points = list(coordinates)[:-1]
+    adjusted = []
+    for index, (x, y) in enumerate(points):
+        previous_x, previous_y = points[index - 1]
+        next_x, next_y = points[(index + 1) % len(points)]
+        tangent_x = next_x - previous_x
+        tangent_y = next_y - previous_y
+        tangent_length = hypot(tangent_x, tangent_y)
+        if tangent_length == 0:
+            adjusted.append((x, y))
+            continue
+        inward_x = -tangent_y / tangent_length
+        inward_y = tangent_x / tangent_length
+        if not geometry.covers(
+            Point(x + inward_x * 0.1, y + inward_y * 0.1)
+        ):
+            inward_x = -inward_x
+            inward_y = -inward_y
+        if not geometry.covers(
+            Point(x + inward_x * 0.1, y + inward_y * 0.1)
+        ):
+            adjusted.append((x, y))
+            continue
+
+        inside = 0.1
+        outside = 1.0
+        while outside < 128 and geometry.covers(
+            Point(x + inward_x * outside, y + inward_y * outside)
+        ):
+            inside = outside
+            outside *= 2
+        if outside >= 128 and geometry.covers(
+            Point(x + inward_x * outside, y + inward_y * outside)
+        ):
+            width = 128
+        else:
+            for _ in range(8):
+                middle = (inside + outside) / 2
+                if geometry.covers(
+                    Point(x + inward_x * middle, y + inward_y * middle)
+                ):
+                    inside = middle
+                else:
+                    outside = middle
+            width = inside
+
+        previous_length = hypot(previous_x - x, previous_y - y)
+        next_length = hypot(next_x - x, next_y - y)
+        if previous_length == 0 or next_length == 0:
+            corner_factor = 0
+        else:
+            cosine = (
+                (previous_x - x) * (next_x - x)
+                + (previous_y - y) * (next_y - y)
+            ) / (previous_length * next_length)
+            angle = acos(max(-1, min(1, cosine)))
+            corner_factor = max(
+                0,
+                min(1, (angle - pi / 4) / (pi / 2)),
+            )
+        inset = adaptive_thinning_inset(width / 2) * corner_factor
+        adjusted.append((x + inward_x * inset, y + inward_y * inset))
+    return adjusted
+
+
+def adaptive_thin_polygon(source: Polygon):
+    source = orient(source.segmentize(4), sign=1.0)
+    candidate = make_valid(
+        Polygon(
+            adaptive_ring_coordinates(source.exterior.coords, source),
+            [
+                adaptive_ring_coordinates(interior.coords, source)
+                for interior in source.interiors
+            ],
+        )
+    )
+    candidate = make_valid(candidate.intersection(source))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        core = make_valid(source.buffer(-4, join_style="mitre"))
+        reopened = (
+            make_valid(core.buffer(4, join_style="mitre"))
+            if not core.is_empty
+            else core
+        )
+    protected = make_valid(source.difference(reopened))
+    candidate = make_valid(
+        unary_union([candidate, protected]).intersection(source)
+    )
+    candidate = unary_union(polygon_parts(candidate))
+    if (
+        candidate.is_empty
+        or len(polygon_parts(candidate)) != 1
+    ):
+        return source
+    return candidate
+
+
+def adaptive_thin_geometry(geometry):
+    """Smoothly thin broad regions while retaining narrow joins and terminals."""
+    geometry = make_valid(geometry)
+    candidate = make_valid(
+        unary_union([
+            adaptive_thin_polygon(polygon)
+            for polygon in polygon_parts(geometry)
+        ])
+    )
+    candidate = unary_union(polygon_parts(candidate))
+    if candidate.is_empty or not polygon_parts(candidate):
+        raise ValueError("Adaptive outline thinning removed an entire glyph.")
+    return candidate
+
+
+def match_glyph_density(
+    glyphs: dict,
+    target_density: float,
+    protected_glyphs: dict | None = None,
+) -> dict:
+    """Match density without uniformly eroding narrow strokes and terminals."""
+    protected_glyphs = protected_glyphs or {}
+    protected_geometries = {
+        name: glyph_geometry(glyph)
+        for name, glyph in protected_glyphs.items()
+        if glyph.numberOfContours > 0
+    }
+    fitted_protected_geometries = {
+        name: fit_protected_geometry(geometry)
+        for name, geometry in protected_geometries.items()
+    }
     geometries = {
         name: glyph_geometry(glyph)
         for name, glyph in glyphs.items()
         if name != ".notdef" and glyph.numberOfContours > 0
     }
-    candidates = [value / 2 for value in range(-6, 9)]
+    candidates = [value / 2 for value in range(-6, 1)]
     results = []
     for inset in candidates:
         adjusted = {}
         safe = True
         for name, geometry in geometries.items():
+            protected = protected_geometries.get(name)
+            fitted_protected = fitted_protected_geometries.get(name)
+            adjustable = (
+                make_valid(geometry.difference(protected))
+                if protected is not None
+                else geometry
+            )
             if inset == 0:
-                candidate = geometry
+                candidate = adjustable
             else:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", RuntimeWarning)
-                    candidate = geometry.buffer(-inset, join_style="mitre")
+                    candidate = adjustable.buffer(
+                        -inset,
+                        join_style="mitre",
+                    )
+            if fitted_protected is not None:
+                candidate = unary_union([candidate, fitted_protected])
+            candidate = make_valid(candidate)
             if candidate.is_empty or not polygon_parts(candidate):
                 safe = False
                 break
@@ -417,10 +602,54 @@ def match_glyph_density(glyphs: dict, target_density: float) -> dict:
         density = statistics.median(
             geometry_density(geometry) for geometry in adjusted.values()
         )
-        results.append((abs(density - target_density), abs(inset), inset, density, adjusted))
+        results.append(
+            (
+                abs(density - target_density),
+                abs(inset),
+                inset,
+                density,
+                adjusted,
+                "uniform",
+            )
+        )
+    source_density = statistics.median(
+        geometry_density(geometry) for geometry in geometries.values()
+    )
+    if source_density > target_density:
+        adjusted = {}
+        for name, geometry in geometries.items():
+            protected = protected_geometries.get(name)
+            fitted_protected = fitted_protected_geometries.get(name)
+            adjustable = (
+                make_valid(geometry.difference(protected))
+                if protected is not None
+                else geometry
+            )
+            candidate = adaptive_thin_geometry(adjustable)
+            if fitted_protected is not None:
+                candidate = make_valid(
+                    unary_union([candidate, fitted_protected])
+                )
+            adjusted[name] = candidate
+        density = statistics.median(
+            geometry_density(geometry) for geometry in adjusted.values()
+        )
+        results.append(
+            (
+                abs(density - target_density),
+                4.0,
+                4.0,
+                density,
+                adjusted,
+                "adaptive",
+            )
+        )
     if not results:
         raise ValueError("No safe outline-weight adjustment could be found.")
-    _, _, inset, density, adjusted = min(results, key=lambda result: result[:3])
+    _, _, inset, density, adjusted, mode = min(
+        results,
+        key=lambda result: result[:3],
+    )
     if inset:
         for name, geometry in adjusted.items():
             glyphs[name] = geometry_to_glyph(geometry)
@@ -428,13 +657,19 @@ def match_glyph_density(glyphs: dict, target_density: float) -> dict:
         "target_density": target_density,
         "matched_density": density,
         "inset": inset,
+        "outline_adjustment": mode,
     }
 
 
-def calibrate_glyphs(glyphs: dict, match_font: Path | None) -> dict | None:
+def calibrate_glyphs(
+    glyphs: dict,
+    match_font: Path | None,
+    protected_glyphs: dict | None = None,
+) -> dict | None:
     """Scale and shift generated glyphs to match a reference Han font."""
     if match_font is None:
         return None
+    protected_glyphs = protected_glyphs or {}
     source_boxes = []
     for glyph_name, glyph in glyphs.items():
         if glyph_name == ".notdef" or glyph.numberOfContours <= 0:
@@ -445,18 +680,23 @@ def calibrate_glyphs(glyphs: dict, match_font: Path | None) -> dict | None:
     target = reference_han_metrics(match_font)
     scale = target["height"] / source_height
     vertical_shift = target["center"] - source_center * scale
-    for glyph_name, glyph in glyphs.items():
-        if glyph_name == ".notdef" or glyph.numberOfContours <= 0:
-            continue
-        coordinates, _, _ = glyph.getCoordinates(None)
-        for index, (x, y) in enumerate(coordinates):
-            coordinates[index] = (
-                round(512 + (x - 512) * scale),
-                round(y * scale + vertical_shift),
-            )
-        glyph.coordinates = coordinates
-        glyph.recalcBounds(None)
-    density = match_glyph_density(glyphs, target["density"])
+    for glyph_set in (glyphs, protected_glyphs):
+        for glyph_name, glyph in glyph_set.items():
+            if glyph_name == ".notdef" or glyph.numberOfContours <= 0:
+                continue
+            coordinates, _, _ = glyph.getCoordinates(None)
+            for index, (x, y) in enumerate(coordinates):
+                coordinates[index] = (
+                    round(512 + (x - 512) * scale),
+                    round(y * scale + vertical_shift),
+                )
+            glyph.coordinates = coordinates
+            glyph.recalcBounds(None)
+    density = match_glyph_density(
+        glyphs,
+        target["density"],
+        protected_glyphs,
+    )
     return {
         **target,
         "source_height": source_height,
@@ -587,7 +827,26 @@ def build_ligature_font(
             for expression in expressions
         }
     )
-    calibration = calibrate_glyphs(glyphs, match_font)
+    protected_glyphs = {
+        output_names[expression]: resolution_to_glyph(
+            SvgResolution(
+                requested_ids=expression,
+                resolved_ids=expression,
+                view_box=resolutions[expression].view_box,
+                paths=(resolutions[expression].paths[-1],),
+            )
+        )
+        for expression in expressions
+        if (
+            resolutions[expression].metadata.get("synthetic_lacuna")
+            or resolutions[expression].metadata.get("synthetic_tofu")
+        )
+    }
+    calibration = calibrate_glyphs(
+        glyphs,
+        match_font,
+        protected_glyphs,
+    )
     metrics = {
         ".notdef": (0, 0),
         **{

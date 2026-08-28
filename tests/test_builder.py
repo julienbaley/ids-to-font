@@ -8,12 +8,16 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import flagOverlapSimple
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
 
 from ids_to_font import font as font_module
 from ids_to_font.builder import build, build_encoded
 from ids_to_font.font import (
+    adaptive_thin_geometry,
+    fit_protected_geometry,
     glyph_geometry,
+    match_glyph_density,
     reference_han_metrics,
     resolution_to_glyph,
 )
@@ -663,6 +667,81 @@ def test_density_geometry_supports_curves_and_counters() -> None:
     assert not geometry.contains(Point(512, 390))
 
 
+def test_density_matching_preserves_small_contours_while_thinning() -> None:
+    pen = TTGlyphPen(None)
+    for left, bottom, right, top in (
+        (100, 100, 700, 700),
+        (800, 100, 802, 102),
+    ):
+        pen.moveTo((left, bottom))
+        pen.lineTo((right, bottom))
+        pen.lineTo((right, top))
+        pen.lineTo((left, top))
+        pen.closePath()
+    glyphs = {
+        ".notdef": TTGlyphPen(None).glyph(),
+        "detail": pen.glyph(),
+    }
+
+    result = match_glyph_density(glyphs, target_density=0.1)
+
+    assert result["inset"] > 0
+    assert glyphs["detail"].numberOfContours == 2
+    assert glyph_geometry(glyphs["detail"]).contains(Point(801, 101))
+
+
+def test_density_matching_does_not_thin_protected_geometry() -> None:
+    source_pen = TTGlyphPen(None)
+    source_pen.moveTo((100, 100))
+    source_pen.lineTo((700, 100))
+    source_pen.lineTo((700, 700))
+    source_pen.lineTo((100, 700))
+    source_pen.closePath()
+    protected_pen = TTGlyphPen(None)
+    protected_pen.moveTo((800, 100))
+    protected_pen.lineTo((816, 100))
+    protected_pen.lineTo((816, 164))
+    protected_pen.lineTo((800, 164))
+    protected_pen.closePath()
+    source_pen.moveTo((800, 100))
+    source_pen.lineTo((816, 100))
+    source_pen.lineTo((816, 164))
+    source_pen.lineTo((800, 164))
+    source_pen.closePath()
+    glyphs = {
+        ".notdef": TTGlyphPen(None).glyph(),
+        "detail": source_pen.glyph(),
+    }
+    protected = {"detail": protected_pen.glyph()}
+    expected = glyph_geometry(protected["detail"])
+
+    match_glyph_density(glyphs, target_density=0.1, protected_glyphs=protected)
+
+    assert glyph_geometry(glyphs["detail"]).contains(expected)
+
+
+def test_protected_geometry_is_fitted_inside_the_advance() -> None:
+    marker = Polygon(((-20, 100), (1044, 100), (1044, 120), (-20, 120)))
+
+    fitted = fit_protected_geometry(marker)
+
+    assert fitted.bounds == pytest.approx((24, 100, 1000, 120))
+
+
+def test_adaptive_thinning_targets_broad_regions_and_preserves_tips() -> None:
+    broad = Polygon(((0, 0), (100, 0), (100, 40), (0, 40)))
+    narrow = Polygon(((150, 0), (250, 0), (250, 8), (150, 8)))
+    pointed = Polygon(((300, 0), (400, 20), (300, 40)))
+    source = unary_union((broad, narrow, pointed))
+
+    thinned = adaptive_thin_geometry(source)
+
+    assert thinned.intersection(broad).area < broad.area * 0.85
+    assert thinned.intersection(narrow).area > narrow.area * 0.8
+    assert thinned.intersects(Point(399.5, 20).buffer(0.6))
+    assert len(thinned.geoms) == 3
+
+
 def test_separately_filled_paths_use_consistent_contour_winding(
     tmp_path: Path,
 ) -> None:
@@ -720,6 +799,7 @@ def test_match_font_thins_glyphs_for_a_lighter_reference(tmp_path: Path) -> None
     mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
     calibration = mapping["calibration"]
     assert calibration["outline_inset"] > 0
+    assert calibration["outline_adjustment"] == "adaptive"
     assert calibration["matched_density"] < 0.27
     with TTFont(result.font_path) as font:
         glyph_name = mapping["glyphs"]["⿰鳥叴"]["glyph"]

@@ -189,11 +189,12 @@ ids-to-font ids.txt \
 
 The tool measures full-width CJK Unified Ideographs in the reference font and the
 active IDS glyph set. It then applies one uniform scale and vertical shift to every
-IDS outline, adopts the reference font's normalized vertical metrics, and
-selects the closest safe half-unit outline inset or expansion within a bounded
-range to match median ink density. The derived scale, shift, density, outline
-inset, and reference sample sizes are recorded under `calibration` in the
-output mapping.
+IDS outline and adopts the reference font's normalized vertical metrics. When the
+generated outlines are too dark, broad stroke bodies are thinned adaptively by up
+to four units while narrow joins and pointed terminals receive little or no
+thinning. Denser reference fonts still use a bounded uniform expansion. The
+derived scale, shift, density, outline adjustment, maximum inset, and reference
+sample sizes are recorded under `calibration` in the output mapping.
 
 Matching is optical rather than stylistic: outlines from different type
 designs will retain their individual stroke shapes.
