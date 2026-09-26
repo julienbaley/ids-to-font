@@ -1115,20 +1115,21 @@ def lacuna_mark_path(
     raise ValueError("Lacuna style must be 'dots' or 'dashes'.")
 
 
-def synthesize_question_tofu(
+def synthesize_tofu(
+    character: str,
     lacuna_style: str = "dots",
     match_font: Path | None = None,
 ) -> SvgResolution:
     if match_font is not None:
         with TTFont(match_font) as font:
-            if ord(TOFU_QUESTION) in font.getBestCmap():
+            if ord(character) in font.getBestCmap():
                 contours = transform_reference_contours(
-                    font_contours(font, TOFU_QUESTION),
+                    font_contours(font, character),
                     (21.375, 21.375, 73.625, 73.625),
                 )
                 return SvgResolution(
-                    requested_ids=TOFU_QUESTION,
-                    resolved_ids=TOFU_QUESTION,
+                    requested_ids=character,
+                    resolved_ids=character,
                     view_box="0 0 95 95",
                     paths=(
                         {
@@ -1148,9 +1149,13 @@ def synthesize_question_tofu(
                         "synthetic_tofu": True,
                         "lacuna_style": lacuna_style,
                         "outline_provider": match_font.name,
-                        "outline_character": TOFU_QUESTION,
+                        "outline_character": character,
                     },
                 )
+    if character != TOFU_QUESTION:
+        raise ValueError(
+            f"Boxed character request requires --match-font containing {character}."
+        )
     question_path = (
         "M 31,31 "
         "Q 31,17 47,17 "
@@ -1182,6 +1187,13 @@ def synthesize_question_tofu(
             "outline_provider": "synthetic",
         },
     )
+
+
+def synthesize_question_tofu(
+    lacuna_style: str = "dots",
+    match_font: Path | None = None,
+) -> SvgResolution:
+    return synthesize_tofu(TOFU_QUESTION, lacuna_style, match_font)
 
 
 def synthesize_from_samples(

@@ -18,9 +18,22 @@ def test_reads_unique_sorted_newline_input(tmp_path: Path) -> None:
 
 def test_reads_question_tofu_request(tmp_path: Path) -> None:
     path = tmp_path / "ids.txt"
-    path.write_text("{?}\n", encoding="utf-8")
+    path.write_text("?\n", encoding="utf-8")
 
     assert read_ids(path) == ["?"]
+
+
+def test_reads_identified_character_tofu_request(tmp_path: Path) -> None:
+    path = tmp_path / "ids.txt"
+    path.write_text("?加\n", encoding="utf-8")
+
+    assert read_ids(path) == ["?加"]
+
+
+@pytest.mark.parametrize("value", ["?加力", "{?}", "{?加}", "{?{加}}"])
+def test_rejects_invalid_tofu_request(value: str) -> None:
+    with pytest.raises(ValueError):
+        normalize_ids(value)
 
 
 @pytest.mark.parametrize("value", ["鳥", "{⿰鳥叴}", "⿰鳥 叴"])

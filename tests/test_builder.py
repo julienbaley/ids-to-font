@@ -119,7 +119,7 @@ def contour_areas(font: TTFont, glyph_name: str) -> list[float]:
     return areas
 
 
-def write_reference_font(path: Path) -> None:
+def write_reference_font(path: Path, character: str | None = None) -> None:
     pen = TTGlyphPen(None)
     pen.moveTo((50, -100))
     pen.lineTo((950, -100))
@@ -132,23 +132,33 @@ def write_reference_font(path: Path) -> None:
     question_pen.lineTo((650, 700))
     question_pen.lineTo((350, 700))
     question_pen.closePath()
+    glyphs = {
+        ".notdef": TTGlyphPen(None).glyph(),
+        "uni003F": question_pen.glyph(),
+        "uni4E00": pen.glyph(),
+    }
+    character_map = {0x003F: "uni003F", 0x4E00: "uni4E00"}
+    metrics = {
+        ".notdef": (1024, 0),
+        "uni003F": (1024, 0),
+        "uni4E00": (1024, 50),
+    }
+    if character is not None:
+        glyph_name = font_module.unicode_glyph_name(ord(character))
+        character_pen = TTGlyphPen(None)
+        character_pen.moveTo((350, 200))
+        character_pen.lineTo((650, 200))
+        character_pen.lineTo((650, 700))
+        character_pen.lineTo((350, 700))
+        character_pen.closePath()
+        glyphs[glyph_name] = character_pen.glyph()
+        character_map[ord(character)] = glyph_name
+        metrics[glyph_name] = (1024, 0)
     builder = FontBuilder(1024, isTTF=True)
-    builder.setupGlyphOrder([".notdef", "uni003F", "uni4E00"])
-    builder.setupCharacterMap({0x003F: "uni003F", 0x4E00: "uni4E00"})
-    builder.setupGlyf(
-        {
-            ".notdef": TTGlyphPen(None).glyph(),
-            "uni003F": question_pen.glyph(),
-            "uni4E00": pen.glyph(),
-        }
-    )
-    builder.setupHorizontalMetrics(
-        {
-            ".notdef": (1024, 0),
-            "uni003F": (1024, 0),
-            "uni4E00": (1024, 50),
-        }
-    )
+    builder.setupGlyphOrder(list(glyphs))
+    builder.setupCharacterMap(character_map)
+    builder.setupGlyf(glyphs)
+    builder.setupHorizontalMetrics(metrics)
     builder.setupHorizontalHeader(ascent=900, descent=-100, lineGap=20)
     builder.setupOS2(
         sTypoAscender=900,
@@ -347,6 +357,40 @@ def test_question_tofu_uses_match_font_question_mark(tmp_path: Path) -> None:
 
     assert mapping["glyphs"]["?"]["outline_provider"] == "reference.ttf"
     assert mapping["glyphs"]["?"]["outline_character"] == "?"
+
+
+def test_identified_character_tofu_uses_match_font_outline(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.ttf"
+    write_reference_font(reference, character="加")
+
+    result = build(
+        ["?加"],
+        tmp_path / "build",
+        output_format="ttf",
+        match_font=reference,
+        delay=0,
+        resolver=lambda ids: pytest.fail(f"Unexpected lookup for {ids}"),
+    )
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+
+    assert mapping["glyphs"]["?加"]["outline_character"] == "加"
+    assert mapping["glyphs"]["?加"]["synthetic_tofu"] is True
+    with TTFont(result.font_path) as font:
+        assert font.getBestCmap() == {ord("?"): "uni003F", ord("加"): "uni52A0"}
+        assert font["glyf"]["ids00000"].numberOfContours > 2
+
+
+def test_identified_character_tofu_requires_matching_outline(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="requires --match-font containing 加"):
+        build(
+            ["?加"],
+            tmp_path,
+            output_format="ttf",
+            delay=0,
+            resolver=lambda ids: pytest.fail(f"Unexpected lookup for {ids}"),
+        )
 
 
 def test_builds_required_ligature_font_with_zero_width_components(

@@ -46,13 +46,14 @@ line:
 ⿰鳥叴
 ⿱弔口
 ⿺辶寺
-{?}
+?
 ```
 
 Whitespace inside an expression, braces, comments, and non-IDS lines are
-rejected. The exact special request `{?}` generates an ASCII question mark
-inside the selected dotted or dashed tofu-style box. Duplicate lines are
-harmless.
+rejected. The special request `?` generates an ASCII question mark inside the
+selected dotted or dashed tofu-style box. `?X` places the single character `X`
+in the same box using its outline from `--match-font`; the leading `?` marks it
+as a boxed-character request. Duplicate lines are harmless.
 
 ## Encoded Unicode input
 
